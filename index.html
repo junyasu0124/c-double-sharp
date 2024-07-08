@@ -1,13 +1,80 @@
 <!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Vite + TS</title>
-  </head>
-  <body>
-    <div id="app"></div>
-    <script type="module" src="/src/main.ts"></script>
-  </body>
+<html lang="ja">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title></title>
+  <link rel="stylesheet" href="/style.css" />
+
+  <script>
+    const isDark = matchMedia('(prefers-color-scheme: dark)');
+    const savedTheme = localStorage.getItem('theme');
+    if (savedTheme === null)
+      setAutoMode();
+    else
+      switch (savedTheme) {
+        case 'auto':
+          setAutoMode();
+          break;
+        case 'light':
+          setLightMode();
+          break;
+        case 'dark':
+          setDarkMode();
+          break;
+      }
+
+    function toggleTheme(mql) {
+      if (mql.matches)
+        setDarkMode();
+      else
+        setLightMode();
+    }
+    function setAutoMode(isSetAttribute = true) {
+      if (isDark.matches)
+        setDarkMode(isSetAttribute);
+      else
+        setLightMode(isSetAttribute);
+      isDark.addListener(toggleTheme);
+    }
+    function setLightMode(isSetAttribute = true) {
+      isDark.removeListener(toggleTheme);
+      if (isSetAttribute)
+        document.documentElement.setAttribute('theme', 'light');
+      // document.getElementById('theme-color').setAttribute('content', '#f0f0f0');
+      // document.getElementById('favicon').setAttribute('href', 'img/light-favicon.png');
+      isDark.addListener(toggleTheme);
+    }
+    function setDarkMode(isSetAttribute = true) {
+      isDark.removeListener(toggleTheme);
+      if (isSetAttribute)
+        document.documentElement.setAttribute('theme', 'dark');
+      // document.getElementById('theme-color').setAttribute('content', '#333333');
+      // document.getElementById('favicon').setAttribute('href', 'img/dark-favicon.png');
+      isDark.addListener(toggleTheme);
+    }
+  </script>
+</head>
+
+<body>
+  <div id="contentSpace">
+    <div id="controlSpace"></div>
+    <div id="editorSpace">
+      <span id="caret" class="blink"></span>
+      <div id="lineToMeasure" class="line"></div>
+      <template id="dialogTemplate">
+        <div class="dialogCover">
+          <div class="dialog">
+            <div class="dialogTitle"></div>
+            <div class="dialogContent"></div>
+            <div class="dialogButtons"></div>
+          </div>
+        </div>
+      </template>
+    </div>
+  </div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+
 </html>
