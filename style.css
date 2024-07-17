@@ -1,7 +1,6 @@
 :root {
   --background: #fff;
   --color: #000;
-  --decorations-margin-left: 5ch;
   --line-number-width: 4ch;
 }
 
@@ -47,6 +46,7 @@ body {
   height: 1.2em;
   background-color: var(--color);
   opacity: 1;
+  z-index: 100;
   animation-duration: 1s;
   animation-iteration-count: infinite;
   animation-timing-function: steps(1, end);
@@ -93,36 +93,11 @@ body {
   }
 }
 
-#decorations {
-  position: absolute;
-  width: 100%;
-  height: 100%;
-}
-
-#decorations .decoration {
-  display: inline-block;
-  position: absolute;
-  height: 1.2em;
-  background-color: rgba(0, 200, 255, 0.2);
-}
-
 .line {
   display: flex;
   flex-direction: row;
   width: 100%;
   height: 1.2em;
-}
-
-.line .decorations {
-  position: absolute;
-  margin-left: var(--decorations-margin-left);
-}
-
-.line .decorations .decoration {
-  display: inline-block;
-  position: absolute;
-  height: 1.2em;
-  border-radius: 0.2em;
 }
 
 .line .lineNumber {
@@ -131,6 +106,10 @@ body {
   padding-right: 1ch;
   color: #888;
   user-select: none;
+
+  &.selected {
+    color: var(--color);
+  }
 }
 
 #lineToMeasure {
@@ -141,7 +120,34 @@ body {
 }
 
 .token {
+  position: relative;
   color: var(--color);
   white-space: pre;
   user-select: none;
+
+  & :last-child {
+    position: relative;
+    z-index: 10;
+  }
+
+  &.selection {
+    background-color: #46f9ff55;
+
+    &.extensionOfLineBreak {
+      padding-right: 7px;
+    }
+  }
+}
+
+.line .decoration {
+  display: inline-block;
+  position: absolute;
+  height: 1.2em;
+}
+
+.line .extensionOfLineBreakForEmptyLine {
+  display: inline-block;
+  width: 7px;
+  height: 1.2em;
+  background-color: #46f9ff55;
 }
