@@ -5,7 +5,7 @@
 }
 
 :root[theme="dark"] {
-  --background: #333;
+  --background: #222;
   --color: #ddd;
 }
 
@@ -30,6 +30,8 @@ body {
 }
 
 #editorSpace {
+  display: grid;
+  grid-template-columns: 100%;
   position: relative;
   grid-row: 2;
   grid-column: 1;
@@ -39,9 +41,15 @@ body {
   cursor: text;
 }
 
+.pane {
+  position: relative;
+  overflow: auto;
+}
+
 #caret {
   display: inline-block;
   position: absolute;
+  visibility: visible;
   width: 2px;
   height: 1.2em;
   background-color: var(--color);
@@ -53,6 +61,10 @@ body {
 
   &.blink {
     animation-name: caretBlink;
+  }
+
+  &.hidden {
+    visibility: hidden;
   }
 }
 
@@ -143,6 +155,15 @@ body {
   display: inline-block;
   position: absolute;
   height: 1.2em;
+
+  &.error {
+    height: 1.4em;
+    text-decoration: underline wavy rgb(200, 20, 20);
+    z-index: 20;
+    overflow-x: hidden;
+    transform: scale(0.8);
+    transform-origin: left;
+  }
 }
 
 .line .extensionOfLineBreakForEmptyLine {
@@ -150,4 +171,5 @@ body {
   width: 7px;
   height: 1.2em;
   background-color: #46f9ff55;
+                                color: #c3ffbb
 }

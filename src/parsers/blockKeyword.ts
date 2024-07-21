@@ -1,4 +1,5 @@
-import { Token, SyntaxError, UnhandledError, isNext, convertBlock, converted, indentCount, } from "../convert";
+import { BaseToken } from "../main";
+import { SyntaxError, UnhandledError, isNext, convertBlock, converted, indentCount, } from "../convert";
 import { convertRightSide } from "./rightSide";
 import { Type } from "./typeAndVariable";
 
@@ -10,7 +11,7 @@ export { convertBlockKeyword };
  * @param tokens keywordから始まるtokens
  * @param converted 
  */
-function convertBlockKeyword(tokens: Token[], insertIndex: number, assigningType: null | true | Type, indentLevel: number, changeToYieldReturn = false): number {
+function convertBlockKeyword(tokens: BaseToken[], insertIndex: number, assigningType: null | true | Type, indentLevel: number, changeToYieldReturn = false): number {
   if (tokens.length === 0)
     throw new UnhandledError();
   if (tokens[0].category !== 'keyword')

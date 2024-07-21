@@ -1,4 +1,5 @@
-import { SyntaxError, Token, isAccessor, isNext, removeEmptyWords } from '../convert';
+import { BaseToken as Token } from '../main';
+import { SyntaxError, isAccessor, removeEmptyWords } from '../convert';
 
 export type { Variable, Type };
 export { parseArgsAndReturned, parseArgs, convertType, parseType, parseFunctionType };
@@ -92,7 +93,6 @@ function parseVariable(tokens: Token[], isFnArg: boolean, earlyReturn: boolean, 
 
   let name = tokens[0].text;
   if (name === '_') {
-    tokens[0].kind = 'operator.discard';
     return {
       variable: null,
       endAt: 1,
@@ -124,7 +124,6 @@ function parseVariable(tokens: Token[], isFnArg: boolean, earlyReturn: boolean, 
   if (tokens[colonIndex].text !== ':') {
     throw new SyntaxError(tokens[0], 'Missing colon');
   }
-  tokens[colonIndex].kind = 'operator.type-annotation';
   tokens[colonIndex - 1].kind = isFnArg ? 'name.fn-arg' : 'name.var';
   if (tokens.length < colonIndex + 2) {
     throw new SyntaxError(tokens[colonIndex], 'Missing type');
@@ -284,7 +283,6 @@ function parseType(tokens: Token[], earlyReturn: boolean, nextEarlyReturn: boole
       if (current.text === '?') {
         if (type === null)
           throw new SyntaxError(current);
-        current.kind = 'operator.other';
         if (typeType === 'tuple') {
           if ('name' in (type as TupleType).types[(type as TupleType).types.length - 1]) {
             if (((type as TupleType).types[(type as TupleType).types.length - 1] as Variable).type.nullable === true)
@@ -303,7 +301,6 @@ function parseType(tokens: Token[], earlyReturn: boolean, nextEarlyReturn: boole
         i++;
         continue;
       } else if (current.text === '~') {
-        current.kind = 'operator.tuple-connector';
         if (earlyReturn) {
           break;
         }
@@ -319,7 +316,6 @@ function parseType(tokens: Token[], earlyReturn: boolean, nextEarlyReturn: boole
       } else if (current.text === '#') {
         if (type === null)
           throw new SyntaxError(current);
-        current.kind = 'operator.array-marker';
         type = convertIntoArray(type, typeType);
         if (typeType === 'normal') {
           typeType = 'array';
@@ -357,7 +353,6 @@ function parseType(tokens: Token[], earlyReturn: boolean, nextEarlyReturn: boole
         throw new SyntaxError(tokens[i + 2]);
       }
       current.kind = 'name.other';
-      tokens[i + 1].kind = 'operator.other';
       qualifiedNamesOfType.push({ name: { type: current.text } as NormalType, accessor: tokens[i + 1].text as '.' | '?.' | '!.', nameToken: current, accessorToken: tokens[i + 1] });
       i += 2;
     }
@@ -366,7 +361,6 @@ function parseType(tokens: Token[], earlyReturn: boolean, nextEarlyReturn: boole
       let nullable = false;
       if (i + 1 < tokens.length && tokens[i + 1].text === '?') {
         nullable = true;
-        tokens[i + 1].kind = 'operator.other';
         i++;
       }
       if (i + 2 >= tokens.length) {
@@ -374,7 +368,6 @@ function parseType(tokens: Token[], earlyReturn: boolean, nextEarlyReturn: boole
       } else if (tokens[i + 1].text !== ':' || tokens[i + 1].category !== 'operator') {
         throw new SyntaxError(current, 'Missing colon');
       }
-      tokens[i + 1].kind = 'operator.type-annotation';
       if (qualifiedNamesOfType.length !== 0) {
         throw new SyntaxError(qualifiedNamesOfType[qualifiedNamesOfType.length - 1].accessorToken);
       }
@@ -396,7 +389,6 @@ function parseType(tokens: Token[], earlyReturn: boolean, nextEarlyReturn: boole
         break;
       }
     } else if (i + 2 < tokens.length && tokens[i + 1].text === '-' && tokens[i + 1].category === 'operator') {
-      tokens[i + 1].kind = 'operator.generics-params-annotation';
       const genericsType = parseGenericsType(tokens.slice(i), nextEarlyReturn, true, inGenerics);
       if (typeType !== null && typeType !== 'tuple') {
         throw new SyntaxError(tokens[i], 'Unexpected generics type');
@@ -415,7 +407,6 @@ function parseType(tokens: Token[], earlyReturn: boolean, nextEarlyReturn: boole
         break;
       }
     } else if (i + 2 < tokens.length && tokens[i + 1].text === ':' && tokens[i + 1].category === 'operator') {
-      tokens[i + 1].kind = 'operator.type-annotation';
       if (qualifiedNamesOfType.length !== 0) {
         throw new SyntaxError(qualifiedNamesOfType[qualifiedNamesOfType.length - 1].accessorToken);
       }
@@ -472,8 +463,6 @@ function parseFunctionType(tokens: Token[], hasArgsName: Boolean, atFnDeclaratio
   if (tokens[0].text === '_') {
     if (tokens[1].text !== '=>' || tokens[1].category !== 'operator')
       throw new SyntaxError(tokens[1], 'Unexpected token');
-    tokens[0].kind = 'operator.discard';
-    tokens[1].kind = 'operator.fn-arrow';
     args = [];
     i++;
   } else {
@@ -503,10 +492,8 @@ function parseFunctionType(tokens: Token[], hasArgsName: Boolean, atFnDeclaratio
         };
       }
       if (tokens[i].text === ',' && tokens[i].category === 'operator') {
-        tokens[i].kind = 'operator.fn-args-separator';
         i++;
       } else if (tokens[i].text === '=>' && tokens[i].category === 'operator') {
-        tokens[i].kind = 'operator.fn-arrow';
         break;
       } else {
         throw new SyntaxError(tokens[i]);
@@ -540,7 +527,6 @@ function parseGenericsType(tokens: Token[], earlyReturn: boolean, nextEarlyRetur
   if (tokens[1].text !== '-' || tokens[1].category !== 'operator') {
     throw new SyntaxError(tokens[0], 'Missing generics parameter');
   }
-  tokens[1].kind = 'operator.generics-params-annotation';
 
   let i = 2;
   while (i < tokens.length) {
@@ -553,7 +539,6 @@ function parseGenericsType(tokens: Token[], earlyReturn: boolean, nextEarlyRetur
       break;
     }
     i++;
-    tokens[i].kind = 'operator.generics-params-separator';
   }
 
   return {

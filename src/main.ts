@@ -1,7 +1,7 @@
-import { Category, Kind, SyntaxError, UnhandledError, contextKeywords, keywords, kindOfKeywordOrModifier, operators } from "./convert";
-import { debounce, EventEmitter, repaint, findLast, findLastIndex } from "./functions";
+import { BaseDecoration, Category, Kind, SyntaxError, UnhandledError, contextKeywords, decorations, indentCount, keywords, kindOfKeywordOrModifier, operators } from "./convert";
+import { debounce, repaint, findLast, findLastIndex } from "./functions";
 
-export { Token };
+export type { BaseToken };
 
 
 const SELECTION_COLOR_ID = 'selection';
@@ -10,19 +10,43 @@ let isLatestCopyNotSelected: false | string = false;
 const splitByLineBreak = /\r\n|\r|\n/;
 
 class Pane {
-  constructor() {
-    this.tokenId = new TokenId();
+  private constructor() {
+    document.getElementById('editorSpace')!.style.gridTemplateColumns = `repeat(${panes.length + 1}, calc(100% / ${panes.length + 1}))`;
+
+    const element = (document.getElementById('paneTemplate')! as HTMLTemplateElement).content.firstElementChild!.cloneNode(true) as HTMLElement;
+    element.id = 'pane' + this.paneId.toString();
+    document.getElementById('editorSpace')!.appendChild(element);
+
     this.decorationsData = new DecorationsData();
-    this.caret = new Caret(this.decorationsData);
-    this.lines = new Lines(this.caret, this.tokenId, this.decorationsData);
+    this.caret = new Caret(this.paneId, this.decorationsData);
+    this.lines = new Lines(this.paneId, this.caret, this.decorationsData);
     this.caret.lines = this.lines;
+
+    this.lines.appendLine();
+    this.caret.set(0, 0);
+  }
+
+  public static create(selectNewPane = true) {
+    const pane = new Pane();
+    panes.push(pane);
+    if (selectNewPane)
+      selectedPaneId = pane.paneId;
+    else
+      pane.caret.hide();
+    return pane;
+  }
+
+  public delete() {
+    if (panes.length === 1) return;
+    document.getElementById('pane' + this.paneId.toString())!.remove();
+    panes.splice(panes.findIndex(pane => pane.paneId === this.paneId), 1);
+    document.getElementById('editorSpace')!.style.gridTemplateColumns = `repeat(${panes.length}, calc(100% / ${panes.length}))`;
   }
 
   private static lastPaneId = 0;
 
   public readonly paneId = Pane.lastPaneId++;
 
-  tokenId: TokenId;
   decorationsData: DecorationsData;
   caret: Caret;
   lines: Lines;
@@ -33,64 +57,69 @@ class Pane {
   keyDown(e: KeyboardEvent) {
     if (!e.metaKey) {
       switch (e.key) {
+        case 'F10': {
+          panes.find(pane => pane.paneId === selectedPaneId)!.caret.hide();
+          Pane.create();
+          return;
+        }
         case 'ArrowLeft':
         case 'ArrowRight':
           // repeatAction(this.repeatActionTimeout, this.repeatActionInterval, () => {
-            if (e.altKey) {
-            } else {
-              const left = this.caret.rangeStart === null ? this.caret.left : this.caret.rangeStart.left;
-              const top = this.caret.rangeStart === null ? this.caret.top : this.caret.rangeStart.top;
-              if (this.caret.rangeStart === null || e.shiftKey) {
-                if (e.key === 'ArrowLeft')
-                  this.caret.moveLeft();
-                else
-                  this.caret.moveRight();
-              } else {
-                if (e.key === 'ArrowLeft') {
-                  if (this.caret.top >= this.caret.rangeStart.top && (this.caret.top !== this.caret.rangeStart.top || this.caret.left >= this.caret.rangeStart.left))
-                    this.caret.set(this.caret.rangeStart.left, this.caret.rangeStart.top);
-                } else {
-                  if (this.caret.top <= this.caret.rangeStart.top && (this.caret.top !== this.caret.rangeStart.top || this.caret.left <= this.caret.rangeStart.left))
-                    this.caret.set(this.caret.rangeStart.left, this.caret.rangeStart.top);
-                }
-              }
-              if (e.shiftKey)
-                this.caret.changeSelection(left, top);
+          if (e.altKey) {
+          } else {
+            const left = this.caret.rangeStart === null ? this.caret.left : this.caret.rangeStart.left;
+            const top = this.caret.rangeStart === null ? this.caret.top : this.caret.rangeStart.top;
+            if (this.caret.rangeStart === null || e.shiftKey) {
+              if (e.key === 'ArrowLeft')
+                this.caret.moveLeft();
               else
-                this.caret.clearSelection();
+                this.caret.moveRight();
+            } else {
+              if (e.key === 'ArrowLeft') {
+                if (this.caret.top >= this.caret.rangeStart.top && (this.caret.top !== this.caret.rangeStart.top || this.caret.left >= this.caret.rangeStart.left))
+                  this.caret.set(this.caret.rangeStart.left, this.caret.rangeStart.top);
+              } else {
+                if (this.caret.top <= this.caret.rangeStart.top && (this.caret.top !== this.caret.rangeStart.top || this.caret.left <= this.caret.rangeStart.left))
+                  this.caret.set(this.caret.rangeStart.left, this.caret.rangeStart.top);
+              }
             }
+            if (e.shiftKey)
+              this.caret.changeSelection(left, top);
+            else
+              this.caret.clearSelection();
+          }
           // });
           return;
         case 'ArrowUp':
         case 'ArrowDown':
           // repeatAction(this.repeatActionTimeout, this.repeatActionInterval, () => {
-            if (e.altKey) {
-              if (this.caret.rangeStart !== null) {
-                const start = this.caret.rangeStart.top < this.caret.top || (this.caret.rangeStart.top === this.caret.top && this.caret.rangeStart.left < this.caret.left) ? this.caret.rangeStart : { left: this.caret.left, top: this.caret.top };
-                const end = this.caret.rangeStart.top < this.caret.top || (this.caret.rangeStart.top === this.caret.top && this.caret.rangeStart.left < this.caret.left) ? { left: this.caret.left, top: this.caret.top } : this.caret.rangeStart;
-                if ((e.key === 'ArrowUp' && start.top > 0) || (e.key === 'ArrowDown' && end.top < this.lines.lines.length - 1)) {
-                  this.lines.swapLine(start.top, end.top - start.top + 1, e.key === 'ArrowUp');
-                  this.caret.set(this.caret.left, this.caret.top + (e.key === 'ArrowUp' ? -1 : 1));
-                  this.caret.changeSelection(this.caret.rangeStart.left, this.caret.rangeStart.top + (e.key === 'ArrowUp' ? -1 : 1));
-                }
-                return;
-              }
-              if ((e.key === 'ArrowUp' && this.caret.top > 0) || (e.key === 'ArrowDown' && this.caret.top < this.lines.lines.length - 1)) {
-                this.lines.swapLine(this.caret.top, 1, e.key === 'ArrowUp');
+          if (e.altKey) {
+            if (this.caret.rangeStart !== null) {
+              const start = this.caret.rangeStart.top < this.caret.top || (this.caret.rangeStart.top === this.caret.top && this.caret.rangeStart.left < this.caret.left) ? this.caret.rangeStart : { left: this.caret.left, top: this.caret.top };
+              const end = this.caret.rangeStart.top < this.caret.top || (this.caret.rangeStart.top === this.caret.top && this.caret.rangeStart.left < this.caret.left) ? { left: this.caret.left, top: this.caret.top } : this.caret.rangeStart;
+              if ((e.key === 'ArrowUp' && start.top > 0) || (e.key === 'ArrowDown' && end.top < this.lines.lines.length - 1)) {
+                this.lines.swapLine(start.top, end.top - start.top + 1, e.key === 'ArrowUp');
                 this.caret.set(this.caret.left, this.caret.top + (e.key === 'ArrowUp' ? -1 : 1));
+                this.caret.changeSelection(this.caret.rangeStart.left, this.caret.rangeStart.top + (e.key === 'ArrowUp' ? -1 : 1));
               }
-            } else {
-              const left = this.caret.rangeStart === null ? this.caret.left : this.caret.rangeStart.left;
-              const top = this.caret.rangeStart === null ? this.caret.top : this.caret.rangeStart.top;
-              if (e.key === 'ArrowUp')
-                this.caret.moveUp();
-              else
-                this.caret.moveDown();
-              if (e.shiftKey)
-                this.caret.changeSelection(left, top);
-              else
-                this.caret.clearSelection();
+              return;
             }
+            if ((e.key === 'ArrowUp' && this.caret.top > 0) || (e.key === 'ArrowDown' && this.caret.top < this.lines.lines.length - 1)) {
+              this.lines.swapLine(this.caret.top, 1, e.key === 'ArrowUp');
+              this.caret.set(this.caret.left, this.caret.top + (e.key === 'ArrowUp' ? -1 : 1));
+            }
+          } else {
+            const left = this.caret.rangeStart === null ? this.caret.left : this.caret.rangeStart.left;
+            const top = this.caret.rangeStart === null ? this.caret.top : this.caret.rangeStart.top;
+            if (e.key === 'ArrowUp')
+              this.caret.moveUp();
+            else
+              this.caret.moveDown();
+            if (e.shiftKey)
+              this.caret.changeSelection(left, top);
+            else
+              this.caret.clearSelection();
+          }
           // });
           return;
         case 'Enter':
@@ -147,6 +176,27 @@ class Pane {
             } else {
               this.lines.lines[this.caret.top].deleteText(this.caret.left, 1);
             }
+          }
+          return;
+        case 'Tab':
+          if (this.caret.rangeStart !== null) {
+            const leftTemp = this.caret.left;
+            const topTemp = this.caret.top;
+            const leftRangeTemp = this.caret.rangeStart.left;
+            const topRangeTemp = this.caret.rangeStart.top;
+
+            const start = this.caret.rangeStart.top < this.caret.top || (this.caret.rangeStart.top === this.caret.top && this.caret.rangeStart.left < this.caret.left) ? this.caret.rangeStart : { left: this.caret.left, top: this.caret.top };
+            const end = this.caret.rangeStart.top < this.caret.top || (this.caret.rangeStart.top === this.caret.top && this.caret.rangeStart.left < this.caret.left) ? { left: this.caret.left, top: this.caret.top } : this.caret.rangeStart;
+
+            this.caret.clearSelection();
+            for (let i = start.top; i <= end.top; i++) {
+              this.lines.lines[i].insertText(' '.repeat(indentCount), 0);
+            }
+            this.caret.set(leftTemp + indentCount, topTemp);
+            this.caret.changeSelection(leftRangeTemp + indentCount, topRangeTemp);
+          } else {
+            this.lines.lines[this.caret.top].insertText(' '.repeat(indentCount), this.caret.left);
+            this.caret.set(this.caret.left + indentCount, this.caret.top);
           }
           return;
       }
@@ -240,6 +290,14 @@ class Pane {
         } else {
           text = this.lines.lines[this.caret.top].text + '\r\n';
           isLatestCopyNotSelected = text;
+
+          if (e.key === 'x') {
+            this.lines.deleteLine(this.caret.top);
+            if (this.caret.top === this.lines.lines.length)
+              this.caret.set(0, this.caret.top - 1);
+            else
+              this.caret.set(0, this.caret.top);
+          }
         }
         navigator.clipboard.writeText(text);
       } else if (e.key === 'a') {
@@ -255,24 +313,81 @@ class Pane {
 const panes: Pane[] = [];
 let selectedPaneId = 0;
 
+const originalColor = '#fff'; // white
+const commentColor = '#6a9955'; // green
+const stringColor = '#ce9178'; // orange
+const varColor = '#9cdcfe'; // light blue
+const keywordColor = '#569cd6'; // blue
+const controlColor = '#c586c0'; // pink
+const accessibilityKeywordColor = '#3872df'; // dark blue
+
+const worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
+
 document.addEventListener('DOMContentLoaded', () => {
-  const pane = new Pane();
-  panes.push(pane);
+  const pane = Pane.create();
+  Pane.create(false);
 
-  pane.decorationsData.backgroundColors.push({ id: 'red', color: '#ff000066' });
-  pane.decorationsData.backgroundColors.push({ id: 'green', color: '#00ff0066' });
-  pane.lines.appendLine();
-  pane.caret.set(0, 0);
+  pane.decorationsData.colors = [
+    { id: 'comment.line', color: commentColor },
+    { id: 'comment.block', color: commentColor },
 
-  pane.lines.lines[0].insertText('C#', 0);
+    { id: 'bracket.brace', color: originalColor },
+    { id: 'bracket.parenthesis', color: originalColor },
 
-  pane.lines.appendLine('Hello, World!');
-  pane.lines.appendLine('こんにちは、世界！');
+    { id: 'space.line-break', color: originalColor },
+    { id: 'space.space', color: originalColor },
 
-  Decorations.create(pane.lines, pane.decorationsData, 0, 0, 2, 'green');
-  Decorations.create(pane.lines, pane.decorationsData, 1, 1, 8, 'red');
+    { id: 'literal.string', color: stringColor },
+    { id: 'literal.raw-string', color: stringColor },
+    { id: 'literal.char', color: stringColor },
+    { id: 'literal.number', color: '#b5cea8' },
 
-  let errored = false;
+    { id: 'operator', color: originalColor },
+
+    { id: 'keyword.declarator', color: keywordColor },
+    { id: 'keyword.builtin-type', color: keywordColor },
+    { id: 'keyword.literal', color: keywordColor },
+    { id: 'keyword.operator', color: keywordColor },
+    { id: 'keyword.block-with-expr', color: controlColor },
+    { id: 'keyword.block-without-expr', color: controlColor },
+    { id: 'keyword.var', color: keywordColor },
+    { id: 'keyword.const', color: keywordColor },
+    { id: 'keyword.method', color: keywordColor },
+    { id: 'keyword.expr', color: controlColor },
+    { id: 'keyword.block-or-method', color: keywordColor },
+    { id: 'keyword.method-or-const', color: keywordColor },
+    { id: 'keyword.accessor', color: keywordColor },
+    { id: 'keyword.other', color: keywordColor },
+
+    { id: 'name.class', color: '#4ec9b0' },
+    { id: 'name.struct', color: '#4ec9b0' },
+    { id: 'name.fn', color: '#dcdcaa' },
+    { id: 'name.var', color: varColor },
+    { id: 'name.const', color: '#4fc1ff' },
+    { id: 'name.fn-arg', color: varColor },
+    { id: 'name.field', color: varColor },
+    { id: 'name.prop', color: originalColor },
+    { id: 'name.enum', color: '#4ec9b0' },
+    { id: 'name.interface', color: '#4ec9b0' },
+    { id: 'name.namespace', color: '#fff' },
+    { id: 'name.other', color: varColor },
+
+    { id: 'modifier.after-at', color: accessibilityKeywordColor },
+    { id: 'modifier.other', color: keywordColor },
+  ];
+
+  const saved = localStorage.getItem('text') ?? '';
+  const split = saved.split(splitByLineBreak);
+  if (split.length > 1) {
+    for (let i = 1; i < split.length; i++)
+      pane.lines.appendLine();
+  }
+  Line.splitTextAndCreateToken(pane.lines, pane.decorationsData, saved, saved, 0, 0, false, 0, true);
+
+  // Decorations.create(pane.paneId, pane.lines, pane.decorationsData, 0, 0, 2, 'green');
+  // Decorations.create(pane.paneId, pane.lines, pane.decorationsData, 1, 1, 8, 'red');
+  // Decorations.create(pane.paneId, pane.lines, pane.decorationsData, 1, 1, 8, undefined, 'error');
+
   document.onkeydown = (e) => {
     if (e.isComposing || e.keyCode === 243 || e.keyCode === 244) {
       return;
@@ -286,16 +401,195 @@ document.addEventListener('DOMContentLoaded', () => {
     const pane = panes.find(pane => pane.paneId === selectedPaneId)!;
     pane.keyDown(e);
 
+    let tokenId = -1;
+    const tokens: {
+      tokenId: number;
+      text: string;
+      start: number;
+      end: number;
+      category: string | undefined;
+      kind: string | undefined;
+      data?: any;
+    }[] = [];
+    let jGoto = 0;
+    for (let i = 0; i < panes[0].lines.lines.length; i++) {
+      const line = panes[0].lines.lines[i];
+      for (let j = jGoto; j < line.tokens.length; j++) {
+        jGoto = 0;
+        const token = line.tokens[j];
+        if (token.kind === 'comment.block' || token.kind === 'literal.raw-string') {
+          let lastSameKindIndex = j;
+          let lastSameKindTop = i;
+          let endIndex = -1;
+          let endTop = i;
+          let text = '';
+          for (let k = j + 1; k < line.tokens.length; k++) {
+            if (line.tokens[k].kind !== token.kind) {
+              endIndex = lastSameKindIndex;
+              text = line.tokens.slice(j, k).map(token => token.text).join('');
+              break;
+            } else {
+              lastSameKindIndex = k;
+            }
+          }
+          if (endIndex === -1) {
+            for (let k = i + 1; k < panes[0].lines.lines.length; k++) {
+              const line = panes[0].lines.lines[k];
+              for (let l = 0; l < line.tokens.length; l++) {
+                if (line.tokens[l].kind !== token.kind) {
+                  if (lastSameKindTop === i) {
+                    endIndex = lastSameKindIndex;
+                    endTop = i;
+                    text = panes[0].lines.lines[i].tokens.map(token => token.text).join('');
+                  } else {
+                    endIndex = lastSameKindIndex;
+                    endTop = lastSameKindTop;
+                    text = panes[0].lines.lines[i].tokens.slice(j).map(token => token.text).join('\r\n') + '\r\n' + panes[0].lines.lines.slice(i + 1, endTop).map(line => line.text).join('\r\n') + '\r\n' + panes[0].lines.lines[endTop].tokens.slice(0, lastSameKindIndex).map(token => token.text).join('\r\n');
+                  }
+                  break;
+                } else {
+                  lastSameKindIndex = l;
+                  lastSameKindTop = k;
+                }
+              }
+              if (endIndex !== -1)
+                break;
+            }
+          }
+          if (endIndex === -1) {
+            endIndex = panes[0].lines.lines[panes[0].lines.lines.length - 1].tokens.length - 1;
+            endTop = panes[0].lines.lines.length - 1;
+            text = panes[0].lines.lines[i].tokens.slice(j).map(token => token.text).join('\r\n') + '\r\n' + panes[0].lines.lines.slice(i + 1, endTop + 1).map(line => line.text).join('\r\n');
+          }
+
+          tokens.push({
+            tokenId: token.tokenId,
+            start: token.start,
+            end: panes[0].lines.lines[endTop].tokens[endIndex].end,
+            text,
+            category: token.category,
+            kind: token.kind,
+          })
+          j = endIndex;
+          if (endTop !== i) {
+            i = endTop;
+            jGoto = endIndex;
+            continue;
+          } else {
+            jGoto = 0;
+          }
+        } else {
+          tokens.push({
+            tokenId: token.tokenId,
+            start: token.start,
+            end: token.end,
+            text: token.text,
+            category: token.category,
+            kind: token.kind,
+            data: token.data,
+          });
+        }
+      }
+      if (line.tokens.length > 0) {
+        tokens.push({
+          tokenId: tokenId--,
+          start: line.tokens[line.tokens.length - 1].end,
+          end: line.tokens[line.tokens.length - 1].end,
+          text: '\r\n',
+          kind: 'space.line-break',
+          category: 'line_break',
+        });
+      }
+    }
+
+    worker.onmessage = (e) => {
+      if (e.data.error) {
+        if (e.data.error.cause) {
+          document.getElementById('controlSpace')!.textContent = e.data.error.message + ' ' + e.data.error.cause.start + ' ' + e.data.error.cause.end;
+          let length = 0;
+          let left = 0;
+          let top = -1;
+          for (let i = 0; i < panes[0].lines.lines.length; i++) {
+            const line = panes[0].lines.lines[i];
+            for (let token of line.tokens) {
+              for (let decoration of token.decorations) {
+                if (decoration.type === 'error')
+                  decoration.delete();
+              }
+            }
+            if (top === -1) {
+              length += line.length;
+              if (length > e.data.error.cause.start) {
+                left = e.data.error.cause.start - length + line.length;
+                top = i;
+                continue;
+              }
+            }
+          }
+          Decorations.create(panes[0].paneId, panes[0].lines, panes[0].decorationsData, left, top, e.data.error.cause.end - e.data.error.cause.start, undefined, 'error');
+        } else {
+          document.getElementById('controlSpace')!.textContent = e.data.error.message;
+          for (let i = 0; i < panes[0].lines.lines.length; i++) {
+            const line = panes[0].lines.lines[i];
+            for (let token of line.tokens) {
+              for (let decoration of token.decorations) {
+                if (decoration.type === 'error')
+                  decoration.delete();
+              }
+            }
+          }
+        }
+        return;
+      } else {
+        document.getElementById('controlSpace')!.textContent = '';
+        for (let i = 0; i < panes[0].lines.lines.length; i++) {
+          const line = panes[0].lines.lines[i];
+          for (let token of line.tokens) {
+            for (let decoration of token.decorations) {
+              if (decoration.type !== 'selection')
+                decoration.delete();
+            }
+          }
+        }
+        panes[1].lines.deleteRange({ left: 0, top: 0 }, { left: panes[1].lines.lines[panes[1].lines.lines.length - 1].length, top: panes[1].lines.lines.length - 1 });
+        const split = (e.data.converted as string).split(splitByLineBreak);
+        panes[1].lines.lines[0].insertText(split[0], 0);
+        for (let i = 1; i < split.length; i++) {
+          panes[1].lines.appendLine(split[i], false);
+        }
+        (e.data.decorations as BaseDecoration[]).sort((a, b) => a.start - b.start);
+
+        let top = 0;
+        let left = 0;
+        for (let decoration of (e.data.decorations as BaseDecoration[])) {
+          for (let i = top; i < panes[0].lines.lines.length; i++) {
+            if (panes[0].lines.lines[i].tokens.length > 0) {
+              if (decoration.start >= panes[0].lines.lines[i].tokens[0].start && decoration.start <= panes[0].lines.lines[i].tokens[panes[0].lines.lines[i].tokens.length - 1].end) {
+                top = i;
+                left = decoration.start - panes[0].lines.lines[i].tokens[0].start;
+                break;
+              }
+            }
+          }
+          Decorations.create(panes[0].paneId, panes[0].lines, panes[0].decorationsData, left, top, decoration.end - decoration.start, 'red');
+        }
+      }
+    };
+    worker.postMessage(tokens);
+    localStorage.setItem('text', panes[0].lines.lines.map(line => line.text).join('\r\n'));
+
     let s = 0;
     for (let i = 0; i < pane.lines.lines.length; i++) {
       for (let j = 0; j < pane.lines.lines[i].tokens.length; j++) {
         if (s !== pane.lines.lines[i].tokens[j].start) {
-          if (!errored) {
-            alert('See console.');
-            errored = true;
+          console.error('start error', i, j, s, pane.lines.lines);
+          for (let k = i; k < pane.lines.lines.length; k++) {
+            for (let l = j; l < pane.lines.lines[k].tokens.length; l++) {
+              pane.lines.lines[k].tokens[l].start = s;
+              s += pane.lines.lines[k].tokens[l].text.length;
+              pane.lines.lines[k].tokens[l].end = s;
+            }
           }
-          console.log(s === pane.lines.lines[i].tokens[j].start);
-          console.log(pane.lines.lines);
         }
         s = pane.lines.lines[i].tokens[j].end;
       }
@@ -315,9 +609,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
   let isMouseDown = false;
   document.onmousedown = (e) => {
+    for (let i = 0; i < panes.length; i++) {
+      const paneElement = document.getElementById(`pane${panes[i].paneId}`)!;
+      if (paneElement.offsetLeft <= e.clientX && e.clientX <= paneElement.offsetLeft + paneElement.offsetWidth) {
+        panes.find(pane => pane.paneId === selectedPaneId)!.caret.hide();
+        selectedPaneId = panes[i].paneId;
+        panes[i].caret.show();
+        break;
+      }
+    }
+
     const pane = panes.find(pane => pane.paneId === selectedPaneId)!;
 
-    const position = calculateMousePosition(pane.lines, e);
+    const position = calculateMousePosition(pane.paneId, pane.lines, e);
     if (position === null)
       return;
     if (e.shiftKey) {
@@ -336,7 +640,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const pane = panes.find(pane => pane.paneId === selectedPaneId)!;
     debounce((e: MouseEvent) => {
-      const position = calculateMousePosition(pane.lines, e);
+      const position = calculateMousePosition(pane.paneId, pane.lines, e);
       if (position === null)
         return;
       if (pane.caret.left !== position.left || pane.caret.top !== position.top) {
@@ -353,7 +657,9 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 class Caret {
-  constructor(private decorationsData: DecorationsData) { }
+  constructor(private paneId: number, private decorationsData: DecorationsData) { }
+  private isShown = true;
+
   public lines: Lines | undefined = undefined;
 
   private _left: number = 0;
@@ -408,11 +714,11 @@ class Caret {
       if (this._topOfLeftTemp === null || this._topOfLeftTemp === this._top) {
         this._left = this._leftTemp;
       } else {
-        const width = measureTextWidth(this.lines!.lines[this._topOfLeftTemp].text.slice(0, this._leftTemp));
+        const width = measureTextWidth(this.paneId, this.lines!.lines[this._topOfLeftTemp].text.slice(0, this._leftTemp));
         const text = this.lines!.lines[this._top].text;
         for (let i = 0; i <= this.lines!.lines[this._top].length; i++) {
-          const lastCharWidth = measureTextWidth(text.slice(i - 1, i));
-          const nextWidth = measureTextWidth(text.slice(0, i));
+          const lastCharWidth = measureTextWidth(this.paneId, text.slice(i - 1, i));
+          const nextWidth = measureTextWidth(this.paneId, text.slice(0, i));
           if (nextWidth >= width - lastCharWidth / 2) {
             this._left = i;
             return;
@@ -507,32 +813,54 @@ class Caret {
   private caretBlinkInterval: number | null = null;
   private caretMovedTime = 0;
   private move(left: number, top: number) {
-    const caret = document.getElementById('caret');
+    const caret = document.querySelector(`#pane${this.paneId} #caret`);
     if (caret !== null) {
-      document.querySelector('.lineNumber.selected')?.classList.remove('selected');
+      document.querySelector(`#pane${this.paneId} .lineNumber.selected`)?.classList.remove('selected');
 
-      const lineNumberElement = document.getElementById('line' + this.lines!.lines[this.top].lineId.toString())!.children[0];
-      lineNumberElement.classList.add('selected');
+      const lineNumberElement = document.getElementById(`line${this.lines!.lines[this.top].lineId}`)!.children[0];
+      if (this.isShown)
+        lineNumberElement.classList.add('selected');
 
       const styleOfLineNumberElement = getComputedStyle(lineNumberElement);
       const marginLeft = parseFloat(styleOfLineNumberElement.width.replace('px', '')) + parseFloat(styleOfLineNumberElement.paddingRight.replace('px', ''));
-      caret.className = '';
-      const caretLeft = measureTextWidth(this.lines!.lines[top].text.slice(0, left));
-      caret.style.left = `${caretLeft - 1 + marginLeft}px`;
-      caret.style.top = `${document.getElementById('line' + this.lines!.lines[top].lineId.toString())?.offsetTop}px`;
+      caret.classList.remove('blink');
+      const caretLeft = measureTextWidth(this.paneId, this.lines!.lines[top].text.slice(0, left));
+      (caret as HTMLElement).style.left = `${caretLeft - 1 + marginLeft}px`;
+      (caret as HTMLElement).style.top = `${document.getElementById('line' + this.lines!.lines[top].lineId.toString())?.offsetTop}px`;
       if (this.caretBlinkInterval !== null) {
         clearInterval(this.caretBlinkInterval);
       }
 
-      const now = Date.now();
-      this.caretMovedTime = now;
-      setTimeout(() => {
-        if (this.caretMovedTime === now) {
-          window.requestAnimationFrame(() => {
-            caret.className = 'blink';
-          });
-        }
-      }, 500);
+      if (this.isShown) {
+        const now = Date.now();
+        this.caretMovedTime = now;
+        setTimeout(() => {
+          if (this.caretMovedTime === now) {
+            window.requestAnimationFrame(() => {
+              caret.classList.add('blink');
+            });
+          }
+        }, 500);
+      }
+    }
+  }
+
+  lineIdBeforeHide: number = 0;
+  public show() {
+    this.isShown = true;
+    const caret = document.querySelector(`#pane${this.paneId} #caret`);
+    if (caret !== null) {
+      caret.classList.remove('hidden');
+      document.getElementById(`line${this.lineIdBeforeHide}`)?.classList.add('selected');
+    }
+  }
+  public hide() {
+    this.isShown = false;
+    const caret = document.querySelector(`#pane${this.paneId} #caret`);
+    if (caret !== null) {
+      caret.classList.add('hidden');
+      document.querySelector(`#pane${this.paneId} .lineNumber.selected`)?.classList.remove('selected');
+      this.lineIdBeforeHide = this.lines!.lines[this.top].lineId;
     }
   }
 
@@ -593,33 +921,39 @@ class Caret {
     const startIsHead = isHeadOfToken(this.lines!, start.left, start.top, startLeftAtStartEnd);
     const endIsHead = isHeadOfToken(this.lines!, end.left, end.top, endLeftAtStartEnd);
     if (startIsHead === false) {
-      const startDecorationToken = createStartDecoration(this.lines!, this.decorationsData, this.rangeEndsDecoration);
-      if (endIsHead === false)
-        createEndDecoration(this.lines!, this.decorationsData, this.rangeEndsDecoration, startDecorationToken);
+      const startDecorationToken = createStartDecoration(this.paneId, this.lines!, this.decorationsData);
+      this.rangeEndsDecoration = startDecorationToken.rangeEndsDecoration;
+      if (endIsHead === false) {
+        const created = createEndDecoration(this.paneId, this.lines!, this.decorationsData, this.rangeEndsDecoration, startDecorationToken.startToken);
+        this.rangeEndsDecoration = created;
+      }
     } else if (endIsHead === false) {
-      createEndDecoration(this.lines!, this.decorationsData, this.rangeEndsDecoration);
+      const created = createEndDecoration(this.paneId, this.lines!, this.decorationsData, this.rangeEndsDecoration);
+      this.rangeEndsDecoration = created;
     }
 
-    function createStartDecoration(lines: Lines, decorationsData: DecorationsData, rangeEndsDecoration: { start: Token | null, end: Token | null } | null) {
+    function createStartDecoration(paneId: number, lines: Lines, decorationsData: DecorationsData) {
       const startToken = lines.lines[start.top].tokens.find(token => token.end >= startLeftAtStartEnd)!;
-      Decoration.create(decorationsData, startToken, startLeftAtStartEnd - startToken.start, startToken.text.length - (startLeftAtStartEnd - startToken.start), SELECTION_COLOR_ID, 'selection');
-      rangeEndsDecoration = { start: startToken, end: null };
-      return startToken;
+      Decoration.create(paneId, decorationsData, startToken, startLeftAtStartEnd - startToken.start, startToken.text.length - (startLeftAtStartEnd - startToken.start), SELECTION_COLOR_ID, 'selection');
+      const rangeEndsDecoration = { start: startToken, end: null };
+      return { startToken, rangeEndsDecoration };
     }
-    function createEndDecoration(lines: Lines, decorationsData: DecorationsData, rangeEndsDecoration: { start: Token | null, end: Token | null } | null, startDecorationToken: Token | null = null) {
+    function createEndDecoration(paneId: number, lines: Lines, decorationsData: DecorationsData, rangeEndsDecoration: { start: Token | null, end: Token | null } | null, startDecorationToken: Token | null = null) {
       const endToken = findLast(lines.lines[end.top].tokens, token => token.start <= endLeftAtStartEnd)!;
 
       if (endToken === startDecorationToken) {
         const decoration = startDecorationToken.decorations.find(decoration => decoration.type === 'selection')!;
         decoration.length = endLeftAtStartEnd - startDecorationToken.start - decoration.offset;
-        return;
+        return rangeEndsDecoration;
       }
 
-      Decoration.create(decorationsData, endToken, 0, endLeftAtStartEnd - endToken.start, SELECTION_COLOR_ID, 'selection');
+      Decoration.create(paneId, decorationsData, endToken, 0, endLeftAtStartEnd - endToken.start, SELECTION_COLOR_ID, 'selection');
       if (rangeEndsDecoration === null)
         rangeEndsDecoration = { start: null, end: endToken };
       else
         rangeEndsDecoration.end = endToken;
+
+      return rangeEndsDecoration;
     }
 
     function createExtensionOfLineBreakForEmptyLine(lines: Lines, top: number) {
@@ -655,13 +989,19 @@ class Caret {
 }
 
 class Lines {
-  constructor(private caret: Caret, private tokenId: TokenId, private decorationsData: DecorationsData) { }
+  constructor(private paneId: number, private caret: Caret, private decorationsData: DecorationsData) { }
 
-  private lastLineId: number = 0;
   lines: Line[] = [];
+  ranges: {
+    start: number;
+    startTop: number;
+    end: number;
+    endTop?: number | undefined;
+    kind: "string_literal" | "raw_string_literal" | "char_literal" | "number_literal" | "line_comment" | "block_comment";
+  }[] = [];
 
-  public appendLine(text: string = '') {
-    const line = new Line(this.caret, this, this.tokenId, this.decorationsData, this.lastLineId++);
+  public appendLine(text: string = '', doSplit = true) {
+    const line = new Line(this.paneId, this.caret, this, this.decorationsData);
     this.lines.push(line);
 
     const newLine: HTMLDivElement = document.createElement('div');
@@ -671,21 +1011,27 @@ class Lines {
     lineNumber.classList.add('lineNumber');
     lineNumber.textContent = this.lines.length.toString();
     newLine.append(lineNumber);
-    document.getElementById('editorSpace')?.appendChild(newLine);
+    document.getElementById(`pane${this.paneId}`)!.appendChild(newLine);
 
-    let textIndexOffset: number | undefined = undefined;
+    let textIndexOffset = 0;
     for (let i = this.lines.length - 2; i >= 0; i--) {
       if (this.lines[i].tokens.length > 0) {
         textIndexOffset = this.lines[i].tokens[this.lines[i].tokens.length - 1].end;
         break;
       }
     }
-    Line.splitTextAndCreateToken(this, this.tokenId, text, this.lines.length - 1, 0, false, textIndexOffset);
+
+    if (text !== '') {
+      if (doSplit)
+        Line.splitTextAndCreateToken(this, this.decorationsData, text, text, this.lines.length - 1, 0, false, textIndexOffset);
+      else
+        Token.create(this, this.decorationsData, this.lines.length - 1, 0, text, textIndexOffset, textIndexOffset + text.length, undefined, undefined);
+    }
 
     this.updateLineNumberWidth();
   }
-  public insertLine(top: number, text: string = '') {
-    const line = new Line(this.caret, this, this.tokenId, this.decorationsData, this.lastLineId++);
+  public insertLine(top: number, text: string = '', doSplit = true) {
+    const line = new Line(this.paneId, this.caret, this, this.decorationsData);
     this.lines.splice(top, 0, line);
 
     const newLine: HTMLDivElement = document.createElement('div');
@@ -695,21 +1041,24 @@ class Lines {
     lineNumber.classList.add('lineNumber');
     lineNumber.textContent = (top + 1).toString();
     newLine.append(lineNumber);
-    if (top === 0)
-      document.getElementById('editorSpace')?.insertBefore(newLine, document.getElementById('editorSpace')?.firstChild!);
-    else if (top === this.lines.length - 1)
-      document.getElementById('editorSpace')?.appendChild(newLine);
+    if (top === this.lines.length - 1)
+      document.getElementById(`pane${this.paneId}`)!.appendChild(newLine);
     else
-      document.getElementById('editorSpace')?.insertBefore(newLine, document.getElementById('line' + this.lines[top + 1].lineId.toString()));
+      document.getElementById(`pane${this.paneId}`)!.insertBefore(newLine, document.getElementById('line' + this.lines[top + 1].lineId.toString()));
 
-    let textIndexOffset: number | undefined = undefined;
+    let textIndexOffset = 0;
     for (let i = top - 1; i >= 0; i--) {
       if (this.lines[i].tokens.length > 0) {
         textIndexOffset = this.lines[i].tokens[this.lines[i].tokens.length - 1].end;
         break;
       }
     }
-    Line.splitTextAndCreateToken(this, this.tokenId, text, top, 0, false, textIndexOffset);
+    if (text !== '') {
+      if (doSplit)
+        Line.splitTextAndCreateToken(this, this.decorationsData, text, text, top, 0, false, textIndexOffset);
+      else
+        Token.create(this, this.decorationsData, top, 0, text, textIndexOffset!, textIndexOffset! + text.length, undefined, undefined);
+    }
 
     this.updateLineNumber(top + 1);
     this.updateLineNumberWidth();
@@ -745,9 +1094,9 @@ class Lines {
 
       const move = document.getElementById('line' + this.lines[top - 1].lineId.toString());
       if (top + length === this.lines.length)
-        document.getElementById('editorSpace')?.appendChild(move!);
+        document.getElementById(`pane${this.paneId}`)!.appendChild(move!);
       else
-        document.getElementById('editorSpace')?.insertBefore(move!, document.getElementById('line' + this.lines[top + length].lineId.toString()));
+        document.getElementById(`pane${this.paneId}`)!.insertBefore(move!, document.getElementById('line' + this.lines[top + length].lineId.toString()));
       this.lines.splice(top - 1, 0, ...this.lines.splice(top, length));
 
       let sumLength = 0;
@@ -776,7 +1125,7 @@ class Lines {
       }
 
       const move = document.getElementById('line' + this.lines[top + length].lineId.toString());
-      document.getElementById('editorSpace')?.insertBefore(move!, document.getElementById('line' + this.lines[top].lineId.toString()));
+      document.getElementById(`pane${this.paneId}`)!.insertBefore(move!, document.getElementById('line' + this.lines[top].lineId.toString()));
       this.lines.splice(top + 1, 0, ...this.lines.splice(top, length));
 
       let sumLength = 0;
@@ -817,10 +1166,14 @@ class Lines {
           const decoration = this.lines[start.top + 1].tokens[i].decorations[j];
           let startLeft = this.lines[start.top + 1].tokens[i].start - this.lines[start.top + 1].tokens[0].start + decoration.offset;
           let endLeft = startLeft + decoration.length;
-          if (startLeft !== endLeft) {
-            if (endLeft > start.left)
-              endLeft = start.left;
-            Decorations.create(this, this.decorationsData, startLeft, start.top, endLeft - startLeft, decoration.colorId, decoration.type);
+
+          if (false) {
+          } else {
+            if (startLeft !== endLeft) {
+              if (endLeft > start.left)
+                endLeft = start.left;
+              Decorations.create(this.paneId, this, this.decorationsData, startLeft, start.top, endLeft - startLeft, decoration.colorId, decoration.type);
+            }
           }
         }
       }
@@ -833,7 +1186,7 @@ class Lines {
           if (startLeft !== endLeft) {
             if (startLeft < 0)
               startLeft = 0;
-            Decorations.create(this, this.decorationsData, startLeft, start.top, endLeft - startLeft, decoration.colorId, decoration.type);
+            Decorations.create(this.paneId, this, this.decorationsData, startLeft, start.top, endLeft - startLeft, decoration.colorId, decoration.type);
           }
         }
       }
@@ -870,21 +1223,27 @@ class Lines {
 }
 
 class Line {
-  private static separateByKeyword = /[\w\p{sc=Hiragana}\r{sc=Katakana}\p{sc=Han}、。￥・！”＃＄％＆’（）＊＋，．ー／：；＜＝＞？＠＿‘＾｜～「」｛｝［］【】≪≫《》〈〉〔〕]+|\r\n|\r|\n|([^\S\r\n]+)|==|!==|<=|>=|&&|\|\||=>|\+\+|--|\+=|-=|\*=|\/=|%=|\?\.|!\.|\?\?|\?\?=|>>>|<<|>>|<<=|>>=|>>>=|&=|\^=|\|=|::|\.\.|->|\W/gu;
-  private static commentRegex = /(?:(\/\/.*?)(?:\r\n|\r|\n))|(\/\/.*?$)|(\/\*.*?\*\/)/yms;
-  private static stringLiteralRegex = /(?:(\$@"|@\$"|@\"|@")((?:(?:[^\+\r\n,;]*?)(?:"")*)*)(?:(?:,|;|\r\n|\r|\n|$|\+|==|!=|<=|>=|=>)|(")))|(?:((?<!@)\$?)(")((?:[^"\\]|\\.)*?)(?:(?:(?<!\\)(\\\\)*[;,]|(?= *?(?:\r\n|\r|\n|$|\+|==|!=|<=|>=|=>)))|(?<!\\)(\\\\)*(")))/y;
-  private static rawStringLiteralRegex = /(?<!@)(?<!\$)(\$+?@?|@?\$+?)?(`.*?(?<!\\)`|(?<quote>"{3,}).*?\k<quote>(?!\"))/yms;
-  private static charLiteralRegex = /(')([^ \r\n]+?)(?:(')|(?: |,|;|\r\n|\r|\n|$|\+|==|!=|<=|>=|=>))/y;
+  private static readonly separateByKeyword = /[\w\p{sc=Hiragana}\p{sc=Katakana}\p{sc=Han}、。￥・！”＃＄％＆’（）＊＋，．ー／：；＜＝＞？＠＿‘＾｜～「」｛｝［］【】≪≫《》〈〉〔〕]+|\r\n|\r|\n|([^\S\r\n]+)|==|!=|<=|>=|&&|\|\||=>|\+\+|--|\+=|-=|\*=|\/=|%=|\?\.|!\.|\?\?|\?\?=|>>>|<<|>>|<<=|>>=|>>>=|&=|\^=|\|=|::|\.\.|->|\/\*|\*\/|\W/gu;
+  private static readonly commentRegex = /(?:(\/\/.*?)(?:\r\n|\r|\n))|(\/\/.*?$)|(\/\*.*?\*\/)/yms;
+  private static readonly stringLiteralRegex = /(?:(\$@"|@\$"|@")((?:(?:[^\+\r\n,;]*?)(?:"")*)*)(?:(?:,|;|\r\n|\r|\n|$|\+|==|!=|<=|>=|=>)|(")))|(?:((?<!@)\$?)(")((?:[^"\\]|\\.)*?)(?:(?:(?<!\\)(\\\\)*[;,]|(?= *?(?:\r\n|\r|\n|$|\+|==|!=|<=|>=|=>)))|(?<!\\)(\\\\)*(")))/y;
+  private static readonly rawStringLiteralRegex = /(?<!@)(?<!\$)(\$+?@?|@?\$+?)?(`.*?(?<!\\)`|(?<quote>"{3,}).*?\k<quote>(?!\"))/yms;
+  private static readonly charLiteralRegex = /(')([^ \r\n]+?)(?:(')|(?: |,|;|\r\n|\r|\n|$|\+|==|!=|<=|>=|=>))/y;
+  private static readonly numberLiteralRegex = /\d+(?:\.\d+)?/y;
   // 厳密な判定を行うなら↓
   // private charLiteralRegex = /(')(?:(\\x[0-9A-Fa-f]{1,4})|(\\u[0-9A-Fa-f]{4})|(\\U[0-9A-Fa-f]{8})|(\\['"\\0abefnrtv]))(?:(')|(?: |,|;|\r\n|\r|\n|$|\+|==|!=|<=|>=|=>))/g;
+  private static readonly regexSearchStartRegex = /(\$@"|@\$"|@"|\$"|")|(?<!@)(?<!\$)(?:\$+?@?|@?\$+?)?(`|"{3,})|(')|(\d)|(\/\/)|(\/\*)/g;
 
-  public constructor(private caret: Caret, private lines: Lines, private tokenId: TokenId, private decorationsData: DecorationsData, lineId: number, tokens?: Token[]) {
+  private static lastLineId: number = 0;
+
+  public constructor(paneId: number, private caret: Caret, private lines: Lines, private decorationsData: DecorationsData, tokens?: Token[]) {
+    this.paneId = paneId;
     this.lines = lines;
-    this.lineId = lineId;
+    this.lineId = Line.lastLineId++;
     if (tokens !== undefined)
       this.tokens = tokens;
   }
 
+  private readonly paneId: number;
   readonly lineId: number;
   private _tokens: Token[] = [];
   public leftOfTokensOffset = 0;
@@ -926,6 +1285,91 @@ class Line {
   }
 
   /**
+   * 文字列全体からStringLiteral、RawStringLiteral、CharLiteral、NumberLiteral、Commentを検索し、その範囲を返す
+   */
+  private static searchLiteralAndComment(lines: Lines, entireText: string | undefined = undefined) {
+    entireText ?? (entireText = lines.lines.map(line => line.text).join('\r\n'));
+
+    const ranges: { start: number, end: number, startTop: number, endTop?: number, kind: 'string_literal' | 'raw_string_literal' | 'char_literal' | 'number_literal' | 'line_comment' | 'block_comment' }[] = [];
+
+    let top = 0;
+    for (let i = 0; i < entireText.length;) {
+      this.commentRegex.lastIndex = i;
+      this.stringLiteralRegex.lastIndex = i;
+      this.rawStringLiteralRegex.lastIndex = i;
+      this.charLiteralRegex.lastIndex = i;
+      this.numberLiteralRegex.lastIndex = i;
+
+      let commentPosition = findComment(this.commentRegex, entireText);
+      let stringLiteralPosition = findStringLiteral(this.stringLiteralRegex, entireText);
+      let rawStringLiteralPosition = findRawStringLiteral(this.rawStringLiteralRegex, entireText);
+      let charLiteralPosition = findCharLiteral(this.charLiteralRegex, entireText);
+      let numberLiteralPosition = findNumberLiteral(this.numberLiteralRegex, entireText);
+
+      if (commentPosition !== null && (stringLiteralPosition === null || commentPosition.start < stringLiteralPosition.start) && (rawStringLiteralPosition === null || commentPosition.start < rawStringLiteralPosition.start) && (charLiteralPosition === null || commentPosition.start < charLiteralPosition.start) && (numberLiteralPosition === null || commentPosition.start < numberLiteralPosition.start)) {
+        ranges.push({
+          start: commentPosition.start,
+          end: commentPosition.end,
+          startTop: top,
+          kind: commentPosition.isBlock ? 'block_comment' : 'line_comment'
+        });
+      } else if (stringLiteralPosition !== null && (rawStringLiteralPosition === null || stringLiteralPosition.start < rawStringLiteralPosition.start) && (charLiteralPosition === null || stringLiteralPosition.start < charLiteralPosition.start) && (numberLiteralPosition === null || stringLiteralPosition.start < numberLiteralPosition.start)) {
+        ranges.push({
+          start: stringLiteralPosition.start,
+          end: stringLiteralPosition.end,
+          startTop: top,
+          kind: 'string_literal'
+        });
+      } else if (rawStringLiteralPosition !== null && (charLiteralPosition === null || rawStringLiteralPosition.start < charLiteralPosition.start) && (numberLiteralPosition === null || rawStringLiteralPosition.start < numberLiteralPosition.start)) {
+        ranges.push({
+          start: rawStringLiteralPosition.start,
+          end: rawStringLiteralPosition.end,
+          startTop: top,
+          kind: 'raw_string_literal'
+        });
+      } else if (charLiteralPosition !== null && (numberLiteralPosition === null || charLiteralPosition.start < numberLiteralPosition.start)) {
+        ranges.push({
+          start: charLiteralPosition.start,
+          end: charLiteralPosition.end,
+          startTop: top,
+          kind: 'char_literal'
+        });
+      } else if (numberLiteralPosition !== null) {
+        ranges.push({
+          start: numberLiteralPosition.start,
+          end: numberLiteralPosition.end,
+          startTop: top,
+          kind: 'number_literal'
+        });
+      } else {
+        if (entireText[i] === '\r') {
+          i++;
+          top++;
+        }
+        i++;
+        continue;
+      }
+
+      incrementTop(ranges[ranges.length - 1].start, ranges[ranges.length - 1].end);
+      ranges[ranges.length - 1].endTop = top;
+      i = ranges[ranges.length - 1].end;
+    }
+    return ranges;
+
+    function incrementTop(start: number, end: number) {
+      for (let j = start; j < end; j++) {
+        if (entireText![j] === '\n') {
+          top++;
+        } else if (entireText![j] === '\r') {
+          if (entireText![j + 1] === '\n')
+            j++;
+          top++;
+        }
+      }
+    }
+  }
+
+  /**
    * 文字列をトークン単位に分割し、HTML要素を作成し、かつLines.lineに追加する
    * @param text 分割する文字列
    * @param top トークンを追加する行番号
@@ -934,7 +1378,107 @@ class Line {
    * @param textIndexOffset token.startとtoken.endの値に加算する値
    * @returns token: 追加されたトークン, element: 作成されたトークンのHTML要素, appendToLineFunc: 行にトークンを追加する関数（appendToLineLaterがtrueの場合のみ）
    */
-  public static splitTextAndCreateToken(lines: Lines, tokenId: TokenId, text: string, top: number, insertIndex: number, appendToLineLater = false, textIndexOffset = 0) {
+  public static splitTextAndCreateToken(lines: Lines, decorationsData: DecorationsData, text: string, lineText: string, top: number, insertIndex: number, appendToLineLater = false, textIndexOffset = 0, multiLine = false): {
+    token: Token;
+    element: HTMLSpanElement;
+    appendToLineFunc?: (() => void) | undefined;
+  }[] | number {
+    let target: {
+      start: number;
+      end: number;
+      startTop: number;
+      endTop?: number | undefined;
+      kind: "string_literal" | "raw_string_literal" | "char_literal" | "number_literal" | "line_comment" | "block_comment";
+    }[] = [];
+    const insertLeft = lines.lines[top].tokens.length > 0 ? (insertIndex === lines.lines[top].tokens.length ? lines.lines[top].tokens[lines.lines[top].tokens.length - 1].end : lines.lines[top].tokens[insertIndex].start) - lines.lines[top].tokens[0].start : 0;
+    let insertStart = insertLeft;
+    for (let i = top - 1; i >= 0; i--) {
+      if (lines.lines[i].tokens.length > 0) {
+        insertStart = lines.lines[i].tokens[lines.lines[i].tokens.length - 1].end + insertLeft;
+        break;
+      }
+    }
+
+    const texts: string[] = [];
+    for (let i = 0; i < lines.lines.length; i++) {
+      if (i === top) {
+        texts.push(lineText);
+      } else {
+        texts.push(lines.lines[i].text);
+      }
+    }
+    let entireText = texts.join('\r\n');
+
+    if (multiLine === false) {
+      const ranges = Line.searchLiteralAndComment(lines, entireText);
+
+      const regexSearchStartResult = regexSearchStart();
+      function regexSearchStart() {
+        const result = Line.regexSearchStartRegex.exec(text);
+        if (result === null)
+          return null;
+        return {
+          kind: ["string_literal", "raw_string_literal", "char_literal", "number_literal", "line_comment", "block_comment"][result.findIndex((value, index) => index !== 0 && value !== undefined)! - 1],
+          index: result.index,
+        };
+      }
+
+      target = ranges.filter(range => {
+        const startOffset = regexSearchStartResult !== null && range.kind === regexSearchStartResult.kind ? regexSearchStartResult.index : 0;
+        return range.start <= insertStart + top * 2 + startOffset && insertStart + top * 2 + startOffset <= range.end;
+      });
+      target.push(...lines.ranges.filter(range => {
+        const startOffset = regexSearchStartResult !== null && range.kind === regexSearchStartResult.kind ? regexSearchStartResult.index : 0;
+        return range.start <= insertStart + top * 2 + startOffset && insertStart + top * 2 + startOffset <= range.end;
+      }));
+      if (target.length > 0) {
+        target.sort((a, b) => a.start === b.start ? a.end - b.end : a.start - b.start);
+        multiLine = true;
+
+        let startTop = target[0].startTop;
+        let endTop = target[target.length - 1].endTop!;
+        let previousStart = target[0].start;
+        for (let i = startTop; i >= 0; i--) {
+          const found = ranges.find(range => range.endTop === i && range.start < previousStart && range.start !== target[0].start && range.end !== target[0].end);
+          if (found === undefined) {
+            break;
+          } else {
+            startTop = found.startTop;
+            previousStart = found.start;
+          }
+        }
+        let previousEnd = target[target.length - 1].end;
+        for (let i = endTop; i < lines.lines.length; i++) {
+          const found = ranges.find(range => range.startTop === i && range.end > previousEnd && range.start !== target[target.length - 1].start && range.end !== target[target.length - 1].end);
+          if (found === undefined) {
+            break;
+          } else {
+            endTop = found.endTop!;
+            previousEnd = found.end;
+          }
+        }
+
+        text = texts.slice(startTop, endTop + 1).join('\r\n');
+        top = startTop;
+        insertIndex = 0;
+        appendToLineLater = false;
+        textIndexOffset = 0;
+        for (let i = startTop - 1; i >= 0; i--) {
+          if (lines.lines[i].tokens.length > 0) {
+            textIndexOffset = lines.lines[i].tokens[lines.lines[i].tokens.length - 1].end;
+            break;
+          }
+        }
+
+        for (let i = startTop; i <= endTop; i++) {
+          lines.lines[i].tokens.forEach(token => token.delete());
+          lines.lines[i]._tokens.splice(0, lines.lines[i].tokens.length);
+        }
+
+        lines.ranges = ranges;
+      }
+    }
+
     interface Word {
       text: string;
       start: number;
@@ -982,6 +1526,7 @@ class Line {
                   start: matchPreviousDecimalPoint.index + textIndexOffset,
                   end: matchPreviousDecimalPoint.index + matchPreviousDecimalPoint[0].length + textIndexOffset,
                   category: 'operator',
+                  kind: 'operator',
                 });
                 matchPreviousNumberLiteral = null;
                 matchPreviousDecimalPoint = null;
@@ -1002,6 +1547,7 @@ class Line {
           category = 'line_break';
         } else if (operators.has(match[0])) {
           category = 'operator';
+          kind = 'operator';
         } else if (keywords.has(match[0])) {
           category = 'keyword';
           kind = kindOfKeywordOrModifier(match[0]);
@@ -1054,6 +1600,7 @@ class Line {
           start: matchPreviousDecimalPoint.index + textIndexOffset,
           end: matchPreviousDecimalPoint.index + matchPreviousDecimalPoint[0].length + textIndexOffset,
           category: 'operator',
+          kind: 'operator',
         });
         matchPreviousDecimalPoint = null;
       }
@@ -1061,7 +1608,15 @@ class Line {
 
     const result: { token: Token, element: HTMLSpanElement, appendToLineFunc?: () => void }[] = [];
 
+    let currentTop = top;
     for (let i = 0; i < text.length;) {
+      let offsetOfLineBreak: number;
+      if (multiLine) {
+        offsetOfLineBreak = (currentTop - top) * 2;
+      } else {
+        currentTop = top;
+        offsetOfLineBreak = 0;
+      }
       this.commentRegex.lastIndex = i;
       this.stringLiteralRegex.lastIndex = i;
       this.rawStringLiteralRegex.lastIndex = i;
@@ -1072,82 +1627,116 @@ class Line {
       let rawStringLiteralPosition = findRawStringLiteral(this.rawStringLiteralRegex, text);
       let charLiteralPosition = findCharLiteral(this.charLiteralRegex, text);
 
-      if (commentPosition != null && (stringLiteralPosition == null || commentPosition.start < stringLiteralPosition.start) && (rawStringLiteralPosition == null || commentPosition.start < rawStringLiteralPosition.start) && (charLiteralPosition == null || commentPosition.start < charLiteralPosition.start)) {
-        result.push(Token.create(
-          lines,
-          tokenId,
-          top,
-          insertIndex++,
-          commentPosition.text,
-          commentPosition.start + textIndexOffset,
-          commentPosition.end + textIndexOffset,
-          'comment',
-          commentPosition.isBlock ? 'comment.block' : 'comment.line',
-          undefined,
-          appendToLineLater
-        ));
+      if (commentPosition !== null && (stringLiteralPosition === null || commentPosition.start < stringLiteralPosition.start) && (rawStringLiteralPosition === null || commentPosition.start < rawStringLiteralPosition.start) && (charLiteralPosition === null || commentPosition.start < charLiteralPosition.start)) {
+        if (commentPosition.isBlock) {
+          const split = commentPosition.text.split(splitByLineBreak);
+          let start = commentPosition.start + textIndexOffset - offsetOfLineBreak;
+          for (let j = 0; j < split.length; j++) {
+            result.push(Token.create(
+              lines,
+              decorationsData,
+              currentTop++,
+              insertIndex++,
+              split[j],
+              start,
+              start + split[j].length,
+              'comment',
+              'comment.block',
+              undefined,
+              appendToLineLater
+            ));
+            start += split[j].length;
+          }
+          currentTop--;
+        } else {
+          result.push(Token.create(
+            lines,
+            decorationsData,
+            currentTop,
+            insertIndex++,
+            commentPosition.text,
+            commentPosition.start + textIndexOffset - offsetOfLineBreak,
+            commentPosition.end + textIndexOffset - offsetOfLineBreak,
+            'comment',
+            'comment.line',
+            undefined,
+            appendToLineLater
+          ));
+        }
         i = commentPosition.end;
-      } else if (stringLiteralPosition != null && (rawStringLiteralPosition == null || stringLiteralPosition.start < rawStringLiteralPosition.start) && (charLiteralPosition == null || stringLiteralPosition.start < charLiteralPosition.start)) {
+      } else if (stringLiteralPosition !== null && (rawStringLiteralPosition === null || stringLiteralPosition.start < rawStringLiteralPosition.start) && (charLiteralPosition === null || stringLiteralPosition.start < charLiteralPosition.start)) {
         result.push(Token.create(
           lines,
-          tokenId,
-          top,
+          decorationsData,
+          currentTop,
           insertIndex++,
           stringLiteralPosition.text,
-          stringLiteralPosition.start + textIndexOffset,
-          stringLiteralPosition.end + textIndexOffset,
+          stringLiteralPosition.start + textIndexOffset - offsetOfLineBreak,
+          stringLiteralPosition.end + textIndexOffset - offsetOfLineBreak,
           'string_literal',
           'literal.string',
           undefined,
-          appendToLineLater
+          appendToLineLater,
+          stringLiteralPosition.data,
         ));
         i = stringLiteralPosition.end;
-      } else if (rawStringLiteralPosition != null && (charLiteralPosition == null || rawStringLiteralPosition.start < charLiteralPosition.start)) {
-        result.push(Token.create(
-          lines,
-          tokenId,
-          top,
-          insertIndex++,
-          rawStringLiteralPosition.text,
-          rawStringLiteralPosition.start + textIndexOffset,
-          rawStringLiteralPosition.end + textIndexOffset,
-          'raw_string_literal',
-          'literal.raw-string',
-          undefined,
-          appendToLineLater
-        ));
+      } else if (rawStringLiteralPosition !== null && (charLiteralPosition === null || rawStringLiteralPosition.start < charLiteralPosition.start)) {
+        const split = rawStringLiteralPosition.text.split(splitByLineBreak);
+        let start = rawStringLiteralPosition.start + textIndexOffset - offsetOfLineBreak;
+        for (let j = 0; j < split.length; j++) {
+          result.push(Token.create(
+            lines,
+            decorationsData,
+            currentTop++,
+            insertIndex++,
+            split[j],
+            start,
+            start + split[j].length,
+            'raw_string_literal',
+            'literal.raw-string',
+            undefined,
+            appendToLineLater
+          ));
+          start += split[j].length;
+        }
+        currentTop--;
         i = rawStringLiteralPosition.end;
       } else if (charLiteralPosition != null) {
         result.push(Token.create(
           lines,
-          tokenId,
-          top,
+          decorationsData,
+          currentTop,
           insertIndex++,
           charLiteralPosition.text,
-          charLiteralPosition.start + textIndexOffset,
-          charLiteralPosition.end + textIndexOffset,
+          charLiteralPosition.start + textIndexOffset - offsetOfLineBreak,
+          charLiteralPosition.end + textIndexOffset - offsetOfLineBreak,
           'char_literal',
           'literal.char',
           undefined,
-          appendToLineLater
+          appendToLineLater,
+          charLiteralPosition.data
         ));
         i = charLiteralPosition.end;
       } else {
         const current = words.find(s => s.start == i + textIndexOffset);
         if (current != undefined) {
-          result.push(Token.create(
-            lines,
-            tokenId,
-            top,
-            insertIndex++,
-            current.text,
-            current.start,
-            current.end,
-            current.category,
-            current.kind,
-            undefined,
-            appendToLineLater
-          ));
+          if (current.category === 'line_break') {
+            currentTop++;
+          } else {
+            result.push(Token.create(
+              lines,
+              decorationsData,
+              currentTop,
+              insertIndex++,
+              current.text,
+              current.start - offsetOfLineBreak,
+              current.end - offsetOfLineBreak,
+              current.category,
+              current.kind,
+              undefined,
+              appendToLineLater
+            ));
+          }
           i = current.end - textIndexOffset;
         } else {
           throw new SyntaxError({ content: text[i], start: i, end: i + 1 }, `Unexpected character: ${text[i]}`);
@@ -1155,7 +1744,10 @@ class Line {
       }
     }
 
-    return result;
+    if (multiLine)
+      return currentTop + 1;
+    else
+      return result;
   }
 
   public insertText(text: string, left: number) {
@@ -1174,7 +1766,7 @@ class Line {
           }
         }
       }
-      Line.splitTextAndCreateToken(this.lines, this.tokenId, text, top, 0, false, textIndexOffset);
+      Line.splitTextAndCreateToken(this.lines, this.decorationsData, text, text, top, 0, false, textIndexOffset);
 
       for (let i = top + 1; i < this.lines.lines.length; i++) {
         this.lines.lines[i].leftOfTokensOffset += text.length;
@@ -1185,6 +1777,7 @@ class Line {
     const newTokens: Token[] = [];
     const leftAtStartEnd = left + this.tokens[0].start;
     const isHeadOfToken = this.isHeadOfToken(left, leftAtStartEnd);
+    const thisText = this.text;
 
     let resplitStartIndex: number;
     let resplitEndIndex: number;
@@ -1200,7 +1793,7 @@ class Line {
     if (resplitStartIndex === -2) {
       resplitStartIndex = this.tokens.length - 1;
       resplitEndIndex = this.tokens.length - 1;
-      insertedText = this.text.slice(this.tokens[resplitStartIndex].start - this.tokens[0].start, left) + text;
+      insertedText = thisText.slice(this.tokens[resplitStartIndex].start - this.tokens[0].start, left) + text;
     } else {
       if (resplitStartIndex < 0) {
         resplitStartIndex++;
@@ -1217,11 +1810,18 @@ class Line {
 
     newTokens.push(...this.tokens.slice(0, resplitStartIndex));
 
-    insertedText ??= this.text.slice(this.tokens[resplitStartIndex].start - this.tokens[0].start, left) + text + this.text.slice(left, this.tokens[resplitEndIndex].end - this.tokens[0].start);
+    insertedText ??= thisText.slice(this.tokens[resplitStartIndex].start - this.tokens[0].start, left) + text + thisText.slice(left, this.tokens[resplitEndIndex].end - this.tokens[0].start);
     for (let i = resplitStartIndex; i <= resplitEndIndex; i++) {
       this.tokens[i].delete();
     }
-    const resplit = Line.splitTextAndCreateToken(this.lines, this.tokenId, insertedText, top, 0, true, this.tokens[resplitStartIndex].start);
+    const lineText = thisText.slice(0, this.tokens[resplitStartIndex].start - this.tokens[0].start) + insertedText + thisText.slice(this.tokens[resplitEndIndex].end - this.tokens[0].start);
+    const resplit = Line.splitTextAndCreateToken(this.lines, this.decorationsData, insertedText, lineText, top, resplitStartIndex, true, this.tokens[resplitStartIndex].start);
+    if (typeof resplit === 'number') {
+      for (let i = resplit; i < this.lines.lines.length; i++) {
+        this.lines.lines[i].leftOfTokensOffset += text.length;
+      }
+      return;
+    }
     newTokens.push(...resplit.map(x => x.token));
     const insertBeforeElement = resplitEndIndex === this.tokens.length - 1 ? null : document.getElementById(`token${this.tokens[resplitEndIndex + 1].tokenId}`);
     const lineElement = document.getElementById(`line${this.lineId}`);
@@ -1254,7 +1854,7 @@ class Line {
         end += text.length;
 
       if (start !== end) {
-        Decorations.create(this.lines, this.decorationsData, start, top, end - start, decoration[2], decoration[3]);
+        Decorations.create(this.paneId, this.lines, this.decorationsData, start, top, end - start, decoration[2], decoration[3]);
       }
     }
   }
@@ -1267,19 +1867,22 @@ class Line {
 
       const previousLine = this.lines.lines[top - 1];
       if (previousLine.tokens.length === 0) {
-        if (this.tokens.length !== 0)
+        if (this.tokens.length !== 0) {
           this.moveTokens(0, this.tokens.length - 1, 0, top - 1, false);
+          this.lines.lines[top - 1].leftOfTokensOffset -= this.length;
+        }
       } else if (this.tokens.length !== 0) {
         const previousLineLength = previousLine.length;
         const lastTokenIndex = previousLine.tokens.length - 1;
         const lastToken = previousLine.tokens[lastTokenIndex];
         const firstToken = this.tokens[0];
         const text = lastToken.text + firstToken.text;
+        const lineText = previousLine.text + this.text;
 
         const decorationsOfLastToken = previousLine.tokens[lastTokenIndex].decorations.map(decoration => ({ offset: decoration.offset, length: decoration.length, colorId: decoration.colorId, type: decoration.type }));
 
         previousLine.deleteToken(lastToken.tokenId);
-        Line.splitTextAndCreateToken(this.lines, this.tokenId, text, top - 1, previousLine.tokens.length, false, lastToken.start);
+        Line.splitTextAndCreateToken(this.lines, this.decorationsData, text, lineText, top - 1, previousLine.tokens.length, false, lastToken.start);
         for (let i = 1; i < this.tokens.length; i++) {
           this.tokens[i].start += this.leftOfTokensOffset - this.lines.lines[top - 1].leftOfTokensOffset;
           this.tokens[i].end += this.leftOfTokensOffset - this.lines.lines[top - 1].leftOfTokensOffset;
@@ -1288,11 +1891,11 @@ class Line {
 
         for (let i = 0; i < decorationsOfLastToken.length; i++) {
           const decoration = decorationsOfLastToken[i];
-          Decorations.create(this.lines, this.decorationsData, decoration.offset + previousLine.tokens[lastTokenIndex].start - previousLine.tokens[0].start, top - 1, decoration.length, decoration.colorId, decoration.type);
+          Decorations.create(this.paneId, this.lines, this.decorationsData, decoration.offset + previousLine.tokens[lastTokenIndex].start - previousLine.tokens[0].start, top - 1, decoration.length, decoration.colorId, decoration.type);
         }
         for (let i = 0; i < this.tokens[0].decorations.length; i++) {
           const decoration = this.tokens[0].decorations[i];
-          Decorations.create(this.lines, this.decorationsData, decoration.offset + previousLineLength, top - 1, decoration.length, decoration.colorId, decoration.type);
+          Decorations.create(this.paneId, this.lines, this.decorationsData, decoration.offset + previousLineLength, top - 1, decoration.length, decoration.colorId, decoration.type);
         }
       }
       this.lines.deleteLine(top, false);
@@ -1312,17 +1915,19 @@ class Line {
       if (nextLine.tokens.length === 0) {
       } else if (this.tokens.length === 0) {
         nextLine.moveTokens(0, nextLine.tokens.length - 1, 0, top, false);
+        this.lines.lines[top].leftOfTokensOffset -= nextLine.leftOfTokensOffset;
       } else {
         const previousLineLength = this.length;
         const lastTokenIndex = this.tokens.length - 1;
         const lastToken = this.tokens[lastTokenIndex];
         const firstToken = nextLine.tokens[0];
         const text = lastToken.text + firstToken.text;
+        const lineText = this.text + nextLine.text;
 
         const decorationsOfLastToken = this.tokens[lastTokenIndex].decorations;
 
         this.deleteToken(lastToken.tokenId);
-        Line.splitTextAndCreateToken(this.lines, this.tokenId, text, top, this.tokens.length, false, lastToken.start);
+        Line.splitTextAndCreateToken(this.lines, this.decorationsData, text, lineText, top, this.tokens.length, false, lastToken.start);
         for (let i = 1; i < nextLine.tokens.length; i++) {
           nextLine.tokens[i].start += nextLine.leftOfTokensOffset - this.leftOfTokensOffset;
           nextLine.tokens[i].end += nextLine.leftOfTokensOffset - this.leftOfTokensOffset;
@@ -1331,11 +1936,11 @@ class Line {
 
         for (let i = 0; i < decorationsOfLastToken.length; i++) {
           const decoration = decorationsOfLastToken[i];
-          Decorations.create(this.lines, this.decorationsData, decoration.offset + this.tokens[lastTokenIndex].start - this.tokens[0].start, top, decoration.length, decoration.colorId, decoration.type);
+          Decorations.create(this.paneId, this.lines, this.decorationsData, decoration.offset + this.tokens[lastTokenIndex].start - this.tokens[0].start, top, decoration.length, decoration.colorId, decoration.type);
         }
         for (let i = 0; i < nextLine.tokens[0].decorations.length; i++) {
           const decoration = nextLine.tokens[0].decorations[i];
-          Decorations.create(this.lines, this.decorationsData, decoration.offset + previousLineLength, top, decoration.length, decoration.colorId, decoration.type);
+          Decorations.create(this.paneId, this.lines, this.decorationsData, decoration.offset + previousLineLength, top, decoration.length, decoration.colorId, decoration.type);
         }
       }
       this.lines.deleteLine(top + 1, false);
@@ -1344,6 +1949,8 @@ class Line {
 
     const newTokens: Token[] = [];
     const leftAtStartEnd = left + this.tokens[0].start;
+    const thisText = this.text;
+
     const firstDeleteTargetTokenIndex = this.tokens.findIndex(token => token.end > leftAtStartEnd && token.start <= leftAtStartEnd);
     if (firstDeleteTargetTokenIndex === -1)
       return;
@@ -1361,11 +1968,18 @@ class Line {
     const startOfFirstTokenAtLine = this.tokens[0].start;
     const oldDecorations = this.tokens.slice(resplitStartIndex, resplitEndIndex + 1).flatMap(token => token.decorations.map(decoration => [decoration.offset, decoration.length, decoration.colorId, decoration.type, token.start] as [number, number, string, 'selection' | undefined, number]));
 
-    const deletedText = this.text.slice(this.tokens[resplitStartIndex].start - this.tokens[0].start, left) + this.text.slice(left + length, this.tokens[resplitEndIndex].end - this.tokens[0].start);
+    const deletedText = thisText.slice(this.tokens[resplitStartIndex].start - this.tokens[0].start, left) + thisText.slice(left + length, this.tokens[resplitEndIndex].end - this.tokens[0].start);
+    const lineText = thisText.slice(0, this.tokens[resplitStartIndex].start - this.tokens[0].start) + deletedText + thisText.slice(this.tokens[resplitEndIndex].end - this.tokens[0].start);
     for (let i = resplitStartIndex; i <= resplitEndIndex; i++) {
       this.tokens[i].delete();
     }
-    const resplit = Line.splitTextAndCreateToken(this.lines, this.tokenId, deletedText, top, 0, true, this.tokens[resplitStartIndex].start);
+    const resplit = Line.splitTextAndCreateToken(this.lines, this.decorationsData, deletedText, lineText, top, resplitStartIndex, true, this.tokens[resplitStartIndex].start);
+    if (typeof resplit === 'number') {
+      for (let i = resplit; i < this.lines.lines.length; i++) {
+        this.lines.lines[i].leftOfTokensOffset -= length;
+      }
+      return;
+    }
     newTokens.push(...resplit.map(x => x.token));
     const insertBeforeElement = resplitEndIndex === this.tokens.length - 1 ? null : document.getElementById(`token${this.tokens[resplitEndIndex + 1].tokenId}`);
     const lineElement = document.getElementById(`line${this.lineId}`);
@@ -1401,7 +2015,7 @@ class Line {
       if (start !== end && start < newTextLength) {
         if (end > newTextLength)
           end = newTextLength;
-        Decorations.create(this.lines, this.decorationsData, start, top, end - start, decoration[2], decoration[3]);
+        Decorations.create(this.paneId, this.lines, this.decorationsData, start, top, end - start, decoration[2], decoration[3]);
       }
     }
   }
@@ -1449,10 +2063,10 @@ class Line {
       if (tokenElement === null)
         return;
       tokenElement.remove();
-      if (isInsertAtEnd)
+      if (isInsertAtEnd || originalToIndex === lineElement.childNodes.length - 1)
         lineElement.appendChild(tokenElement);
       else
-        lineElement.insertBefore(tokenElement, lineElement.childNodes[originalToIndex]);
+        lineElement.insertBefore(tokenElement, lineElement.childNodes[originalToIndex + 1]);
     }
     this._tokens.splice(fromStartIndex, fromEndIndex - fromStartIndex + 1);
 
@@ -1483,12 +2097,15 @@ class Line {
     const top = this.lines.lines.indexOf(this);
     if (left === 0) {
       this.lines.insertLine(top + 1);
-      if (this.tokens.length !== 0)
+      if (this.tokens.length !== 0) {
         this.moveTokens(0, this.tokens.length - 1, 0, top + 1, false);
+      }
+      this.lines.lines[top + 1].leftOfTokensOffset = this.leftOfTokensOffset;
       this.caret.set(0, top + 1);
       return;
     } else if (left === this.length) {
       this.lines.insertLine(top + 1);
+      this.lines.lines[top + 1].leftOfTokensOffset = this.leftOfTokensOffset;
       this.caret.set(0, top + 1);
       return;
     }
@@ -1499,28 +2116,30 @@ class Line {
     if (tokenFromLeft.isHeadOfToken) {
       this.lines.insertLine(top + 1);
       this.moveTokens(tokenFromLeft.index, this.tokens.length - 1, 0, top + 1, false);
+      this.lines.lines[top + 1].leftOfTokensOffset = this.leftOfTokensOffset;
     } else {
       const target = this.tokens[tokenFromLeft.index];
+      const targetText = target.text;
 
       let targetInNextLineText: string;
       if (this.tokens.length === tokenFromLeft.index + 1) {
-        targetInNextLineText = target.text.slice(left - tokenFromLeft.leftOfTokenAtLine);
+        targetInNextLineText = targetText.slice(left - tokenFromLeft.leftOfTokenAtLine);
 
-        const targetInThisLineText = target.text.slice(0, left - tokenFromLeft.leftOfTokenAtLine);
+        const targetInThisLineText = targetText.slice(0, left - tokenFromLeft.leftOfTokenAtLine);
         const targetStart = target.start;
         this.deleteToken(target.tokenId);
 
-        Line.splitTextAndCreateToken(this.lines, this.tokenId, targetInThisLineText, top, tokenFromLeft.index, false, targetStart);
+        Line.splitTextAndCreateToken(this.lines, this.decorationsData, targetInThisLineText, targetInThisLineText, top, tokenFromLeft.index, false, targetStart);
 
         this.lines.insertLine(top + 1, targetInNextLineText);
       } else {
-        targetInNextLineText = target.text.slice(left - tokenFromLeft.leftOfTokenAtLine) + this.tokens[tokenFromLeft.index + 1].text;
+        targetInNextLineText = targetText.slice(left - tokenFromLeft.leftOfTokenAtLine) + this.tokens[tokenFromLeft.index + 1].text;
 
         const afterDeleteTokenId = this.tokens[tokenFromLeft.index + 1].tokenId;
 
         this.lines.insertLine(top + 1, targetInNextLineText);
 
-        const targetInThisLineText = target.text.slice(0, left - tokenFromLeft.leftOfTokenAtLine);
+        const targetInThisLineText = targetText.slice(0, left - tokenFromLeft.leftOfTokenAtLine);
 
         let leftAtStartEnd = 0;
         for (let i = top; i >= 0; i--) {
@@ -1532,7 +2151,7 @@ class Line {
 
         this.moveTokens(tokenFromLeft.index + 2, this.tokens.length - 1, this.lines.lines[top + 1].tokens.length, top + 1, false);
 
-        Line.splitTextAndCreateToken(this.lines, this.tokenId, targetInThisLineText, top, tokenFromLeft.index, false, target.start);
+        Line.splitTextAndCreateToken(this.lines, this.decorationsData, targetInThisLineText, targetInThisLineText, top, tokenFromLeft.index, false, target.start);
 
         this.deleteToken(afterDeleteTokenId);
         this.deleteToken(target.tokenId);
@@ -1568,10 +2187,18 @@ class Line {
     return null;
   }
 }
-class TokenId {
-  public lastTokenId: number = 0;
+interface BaseToken {
+  tokenId: number;
+  text: string;
+  start: number;
+  end: number;
+  category: Category | undefined;
+  kind: Kind | undefined;
+  data?: any;
 }
-class Token extends EventEmitter {
+class Token implements BaseToken {
+  public static lastTokenId: number = 0;
+
   public readonly tokenId: number;
   public readonly element: HTMLSpanElement | undefined;
   private _text: string = '';
@@ -1583,18 +2210,17 @@ class Token extends EventEmitter {
   public data?: any;
   public line: Line;
 
-  private constructor(private lines: Lines, tokenId: number, element: HTMLSpanElement | undefined, text: string, start: number, end: number, category: Category, kind: Kind | undefined, decorations: Decoration[] | undefined, line: Line) {
-    super();
-
+  private constructor(private lines: Lines, private decorationsData: DecorationsData, tokenId: number, element: HTMLSpanElement | undefined, text: string, start: number, end: number, category: Category, kind: Kind | undefined, decorations: Decoration[] | undefined, data: any, line: Line) {
     this.tokenId = tokenId;
     this.element = element;
     this._text = text;
     this._start = start;
     this._end = end;
     this.category = category;
-    this._kind = kind;
+    this.kind = kind;
     if (decorations !== undefined)
       this.decorations = decorations;
+    this.data = data;
     this.line = line;
   }
 
@@ -1609,10 +2235,11 @@ class Token extends EventEmitter {
    * @param kind 
    * @param decorations 作成するトークンのdecorationsに追加するDecoration
    * @param appendToLineLater 後で戻り値に含まれる関数を使用して行に追加するか（関数実行時の環境でトークンが作成される）
+   * @param data StringLiteralやCharLiteral等に使用される、トークンに付加しておくデータ
    * @returns token: 作成されたトークン, element: 作成されたトークンのHTML要素, appendToLineFunc: 行にトークンを追加する関数（appendToLineLaterがtrueの場合のみ）
    */
-  public static create(lines: Lines, tokens: TokenId, top: number, insertIndex: number | null, text: string, start: number, end: number, category: Category, kind: Kind | undefined, decorations?: Decoration[], appendToLineLater = false): { token: Token, element: HTMLSpanElement, appendToLineFunc?: () => void } {
-    const tokenId = tokens.lastTokenId++;
+  public static create(lines: Lines, decorationsData: DecorationsData, top: number, insertIndex: number | null, text: string, start: number, end: number, category: Category, kind: Kind | undefined, decorations?: Decoration[], appendToLineLater = false, data?: any): { token: Token, element: HTMLSpanElement, appendToLineFunc?: () => void } {
+    const tokenId = Token.lastTokenId++;
     const element = document.createElement('span');
     element.id = `token${tokenId}`;
     element.classList.add('token');
@@ -1620,8 +2247,8 @@ class Token extends EventEmitter {
     textElement.textContent = text;
     element.appendChild(textElement);
 
-    const token = new Token(lines, tokenId, element, text, start - lines.lines[top].leftOfTokensOffset, end - lines.lines[top].leftOfTokensOffset, category, kind, decorations, lines.lines[top]);
-    const tokenIdAtInsertIndex = insertIndex === null || lines.lines[top].tokens.length <= insertIndex ? null : lines.lines[top].tokens[insertIndex].tokenId;
+    const token = new Token(lines, decorationsData, tokenId, element, text, start - lines.lines[top].leftOfTokensOffset, end - lines.lines[top].leftOfTokensOffset, category, kind, decorations, data, lines.lines[top]);
+    const tokenIdAtInsertIndex = (insertIndex === null || lines.lines[top].tokens.length <= insertIndex) ? null : lines.lines[top].tokens[insertIndex].tokenId;
 
     if (appendToLineLater) {
       if (tokenIdAtInsertIndex === null)
@@ -1658,9 +2285,11 @@ class Token extends EventEmitter {
   public set text(text: string) {
     if (text !== this._text) {
       this._text = text;
-      if (this.element !== undefined)
+      if (this.element !== undefined) {
         this.element.children[this.element.children.length - 1].textContent = text;
-      super.emit('changed');
+        if (text === '@')
+          this.element.style.color = accessibilityKeywordColor;
+      }
     }
   }
 
@@ -1669,7 +2298,6 @@ class Token extends EventEmitter {
   }
   public set start(start: number) {
     this._start = start - this.line.leftOfTokensOffset;
-    super.emit('changed');
   }
 
   public get end() {
@@ -1677,7 +2305,6 @@ class Token extends EventEmitter {
   }
   public set end(end: number) {
     this._end = end - this.line.leftOfTokensOffset;
-    super.emit('changed');
   }
 
   public get kind() {
@@ -1685,6 +2312,7 @@ class Token extends EventEmitter {
   }
   public set kind(kind: Kind | undefined) {
     this._kind = kind;
+    this.element!.style.color = this.text === '@' ? accessibilityKeywordColor : this.decorationsData.colors.find(color => color.id === kind)?.color ?? '';
   }
 
   public delete() {
@@ -1708,20 +2336,27 @@ class Token extends EventEmitter {
   }
 }
 
-interface Color {
-  id: string;
-  color: string;
-}
 class DecorationsData {
-  lastDecorationId = 0;
-  colors: Color[] = [];
-  backgroundColors: Color[] = [{ id: SELECTION_COLOR_ID, color: '#46f9ff55' }];
+  colors: {
+    id: Kind;
+    color: string;
+  }[] = [];
+  backgroundColors: {
+    id: string;
+    color: string;
+  }[] = [{ id: SELECTION_COLOR_ID, color: '#46f9ff55' }];
 }
 
+type DecorationType = 'selection' | 'error' | undefined;
 class Decorations {
-  public static create(lines: Lines, decorationsData: DecorationsData, left: number, top: number, length: number, colorId: string, type?: 'selection') {
+  public static create(paneId: number, lines: Lines, decorationsData: DecorationsData, left: number, top: number, length: number, colorId?: string, type?: DecorationType) {
     if (lines.lines[top].tokens.length === 0 || length <= 0)
       return;
+
+    if (type === 'error') {
+      Decoration.createError(paneId, lines, decorationsData, left, top, length);
+      return;
+    }
 
     const leftAtStartEnd = left + lines.lines[top].tokens[0].start;
 
@@ -1735,16 +2370,19 @@ class Decorations {
     }
 
     if (firstTokenIndex === lastTokenIndex) {
-      decorations.push(Decoration.create(decorationsData, lines.lines[top].tokens[firstTokenIndex], leftAtStartEnd - lines.lines[top].tokens[firstTokenIndex].start, length, colorId, type).decoration);
+      decorations.push(Decoration.create(paneId, decorationsData, lines.lines[top].tokens[firstTokenIndex], leftAtStartEnd - lines.lines[top].tokens[firstTokenIndex].start, length, colorId, type).decoration);
     } else {
-      decorations.push(Decoration.create(decorationsData, lines.lines[top].tokens[firstTokenIndex], leftAtStartEnd - lines.lines[top].tokens[firstTokenIndex].start, lines.lines[top].tokens[firstTokenIndex].text.length - (leftAtStartEnd - lines.lines[top].tokens[firstTokenIndex].start), colorId, type).decoration);
+      decorations.push(Decoration.create(paneId, decorationsData, lines.lines[top].tokens[firstTokenIndex], leftAtStartEnd - lines.lines[top].tokens[firstTokenIndex].start, lines.lines[top].tokens[firstTokenIndex].text.length - (leftAtStartEnd - lines.lines[top].tokens[firstTokenIndex].start), colorId, type).decoration);
       for (let i = firstTokenIndex + 1; i < lastTokenIndex; i++)
-        decorations.push(Decoration.create(decorationsData, lines.lines[top].tokens[i], 0, lines.lines[top].tokens[i].text.length, colorId, type).decoration);
-      decorations.push(Decoration.create(decorationsData, lines.lines[top].tokens[lastTokenIndex], 0, leftAtStartEnd + length - lines.lines[top].tokens[lastTokenIndex].start, colorId, type).decoration);
+        decorations.push(Decoration.create(paneId, decorationsData, lines.lines[top].tokens[i], 0, lines.lines[top].tokens[i].text.length, colorId, type).decoration);
+      decorations.push(Decoration.create(paneId, decorationsData, lines.lines[top].tokens[lastTokenIndex], 0, leftAtStartEnd + length - lines.lines[top].tokens[lastTokenIndex].start, colorId, type).decoration);
     }
   }
 }
 class Decoration {
+  private static lastDecorationId = 0;
+
+  private readonly paneId: number;
   private readonly decorationsData: DecorationsData;
 
   public readonly decorationId: number;
@@ -1752,10 +2390,11 @@ class Decoration {
   private _token: Token | undefined;
   private _offset: number;
   private _length: number;
-  private _colorId: string;
-  public type: 'selection' | undefined;
+  private _colorId?: string;
+  public type: DecorationType;
 
-  private constructor(decorationsData: DecorationsData, decorationId: number, element: HTMLSpanElement, token: Token, offset: number, length: number, colorId: string, type?: 'selection') {
+  private constructor(paneId: number, decorationsData: DecorationsData, decorationId: number, element: HTMLSpanElement, token: Token, offset: number, length: number, colorId?: string, type?: DecorationType) {
+    this.paneId = paneId;
     this.decorationsData = decorationsData;
     this.decorationId = decorationId;
     this.element = element;
@@ -1766,7 +2405,7 @@ class Decoration {
     this.type = type;
   }
 
-  public static create(decorationsData: DecorationsData, token: Token, offset: number, length: number, colorId: string, type: 'selection' | undefined, extensionOfLineBreak = false): { decoration: Decoration, element: HTMLSpanElement } {
+  public static create(paneId: number, decorationsData: DecorationsData, token: Token, offset: number, length: number, colorId?: string, type?: 'selection' | undefined, extensionOfLineBreak = false): { decoration: Decoration, element: HTMLSpanElement } {
     if (token.element === undefined)
       throw new UnhandledError();
 
@@ -1780,11 +2419,14 @@ class Decoration {
     } else {
       createdNewElement = true;
       element = document.createElement('span');
-      decorationId = decorationsData.lastDecorationId++;
+      decorationId = Decoration.lastDecorationId++;
       element.id = `decoration${decorationId}`;
+
       element.classList.add('decoration');
+
       if (type === 'selection')
         element.classList.add('selection');
+
       element.style.background = decorationsData.backgroundColors.find(color => color.id === colorId)?.color ?? '';
     }
 
@@ -1796,19 +2438,45 @@ class Decoration {
     if (offset === 0)
       element.style.left = '0';
     else
-      element.style.left = `${measureTextWidth(token.text.slice(0, offset))}px`;
+      element.style.left = `${measureTextWidth(paneId, token.text.slice(0, offset))}px`;
     if (length === 0)
       element.style.width = '0';
     else
-      element.style.width = `${measureTextWidth(token.text.slice(offset, offset + length))}px`;
+      element.style.width = `${measureTextWidth(paneId, token.text.slice(offset, offset + length))}px`;
 
     if (createdNewElement) {
       token.element.prepend(element);
     }
 
-    const decoration = new Decoration(decorationsData, decorationId, element, token, offset, length, colorId, type);
+    const decoration = new Decoration(paneId, decorationsData, decorationId, element, token, offset, length, colorId, type);
 
     token.decorations.push(decoration);
+    return { decoration, element };
+  }
+  public static createError(paneId: number, lines: Lines, decorationsData: DecorationsData, left: number, top: number, length: number) {
+    const element = document.createElement('span');
+    const decorationId = Decoration.lastDecorationId++;
+    element.id = `decoration${decorationId}`;
+
+    element.classList.add('decoration', 'error');
+
+    const firstToken = lines.lines[top].tokens.find(token => token.end > left + lines.lines[top].tokens[0].start);
+    if (firstToken === undefined)
+      return;
+    const offset = left - firstToken.start + lines.lines[top].tokens[0].start;
+
+    element.style.left = `${measureTextWidth(paneId, firstToken.text.slice(0, offset))}px`;
+    const width = measureTextWidth(paneId, lines.lines[top].text.slice(offset, offset + length)) * 1.25;
+    element.style.width = `${width}px`;
+
+    const spaceCharWidth = measureTextWidth(paneId, ' ');
+    element.textContent = ' '.repeat(Math.ceil(width / spaceCharWidth));
+
+    firstToken.element!.prepend(element);
+
+    const decoration = new Decoration(paneId, decorationsData, decorationId, element, firstToken, offset, length, undefined, 'error');
+
+    firstToken.decorations.push(decoration);
     return { decoration, element };
   }
 
@@ -1820,23 +2488,8 @@ class Decoration {
   public get token() {
     return this._token!;
   }
-  private handler = () => {
-    if (this.token.element === undefined)
-      return;
-    if (this.offset === 0)
-      this.element.style.left = this.token.element.style.left;
-    else
-      this.element.style.left = `${measureTextWidth(this.token.text.slice(0, this.offset))}px`;
-    if (this.length === 0)
-      this.element.style.width = '0px';
-    else
-      this.element.style.width = `${measureTextWidth(this.token.text.slice(this.offset, this.offset + this.length))}px`;
-  };
   public set token(token: Token) {
-    if (this._token !== undefined)
-      this._token.off('changed', this.handler);
     this._token = token;
-    this._token.on('changed', this.handler);
   }
 
   public get offset() {
@@ -1848,7 +2501,7 @@ class Decoration {
       if (offset === 0)
         this.element.style.left = '0';
       else
-        this.element.style.left = `${measureTextWidth(this.token.text.slice(this.offset, this.offset + this.length))}px`;
+        this.element.style.left = `${measureTextWidth(this.paneId, this.token.text.slice(this.offset, this.offset + this.length))}px`;
     }
   }
 
@@ -1860,13 +2513,13 @@ class Decoration {
     if (length === 0)
       this.element.style.width = '0';
     else
-      this.element.style.width = `${measureTextWidth(this.token.text.slice(this.offset, this.offset + this.length))}px`;
+      this.element.style.width = `${measureTextWidth(this.paneId, this.token.text.slice(this.offset, this.offset + this.length))}px`;
   }
 
   public get colorId() {
     return this._colorId;
   }
-  public set colorId(colorId: string) {
+  public set colorId(colorId: string | undefined) {
     this._colorId = colorId;
     this.element.style.background = this.decorationsData.backgroundColors.find(color => color.id === colorId)?.color ?? '';
   }
@@ -1875,8 +2528,8 @@ class Decoration {
     this._offset = offset;
     this._length = length;
     if (this.token.element !== undefined) {
-      this.element.style.left = `${measureTextWidth(this.token.text.slice(0, offset))}px`;
-      this.element.style.width = `${measureTextWidth(this.token.text.slice(offset, offset + length))}px`;
+      this.element.style.left = `${measureTextWidth(this.paneId, this.token.text.slice(0, offset))}px`;
+      this.element.style.width = `${measureTextWidth(this.paneId, this.token.text.slice(offset, offset + length))}px`;
     }
   }
 }
@@ -1910,17 +2563,17 @@ class Dialog {
 }
 
 
-function calculateMousePosition(lines: Lines, e: MouseEvent): null | { left: number, top: number } {
-  const editorSpace = document.getElementById('editorSpace');
-  if (editorSpace === null)
+function calculateMousePosition(paneId: number, lines: Lines, e: MouseEvent): null | { left: number, top: number } {
+  const pane = document.getElementById(`pane${paneId}`);
+  if (pane === null)
     return null;
 
-  const editorSpaceSize = editorSpace.getBoundingClientRect();
-  if (e.clientX < editorSpaceSize.left || e.clientX > editorSpaceSize.left + editorSpace.clientWidth || e.clientY < editorSpaceSize.top || e.clientY > editorSpaceSize.top + editorSpace.clientHeight)
+  const editorSpaceSize = pane.getBoundingClientRect();
+  if (e.clientX < editorSpaceSize.left || e.clientX > editorSpaceSize.left + pane.clientWidth || e.clientY < editorSpaceSize.top || e.clientY > editorSpaceSize.top + pane.clientHeight)
     return null;
 
-  const x = e.clientX - editorSpaceSize.left + editorSpace.scrollLeft;
-  const y = e.clientY - editorSpaceSize.top + editorSpace.scrollTop;
+  const x = e.clientX - editorSpaceSize.left + pane.scrollLeft;
+  const y = e.clientY - editorSpaceSize.top + pane.scrollTop;
   const lineHeightInPixel = parseFloat(getComputedStyle(document.querySelector('.line:not(#lineToMeasure)')!).height!.replace('px', ''));
   const top = Math.floor(y / lineHeightInPixel);
 
@@ -1936,16 +2589,17 @@ function calculateMousePosition(lines: Lines, e: MouseEvent): null | { left: num
     if (x <= marginLeft)
       return { left: 0, top };
 
-    const textWidth = measureTextWidth(text);
-    if (textWidth + marginLeft <= x)
+    const textWidth = measureTextWidth(paneId, text);
+    const lastCharWidth = measureTextWidth(paneId, text.slice(length - 1, length));
+    if (textWidth + marginLeft <= x + lastCharWidth / 2)
       return { left: length, top };
 
     let left = 0;
     let right = length;
     while (left < right) {
       const mid = Math.floor((left + right) / 2);
-      const width = measureTextWidth(text.slice(0, mid)) + marginLeft;
-      const lastCharWidth = mid > 0 ? measureTextWidth(text.slice(mid - 1, mid)) : 0;
+      const width = measureTextWidth(paneId, text.slice(0, mid)) + marginLeft;
+      const lastCharWidth = mid > 0 ? measureTextWidth(paneId, text.slice(mid - 1, mid)) : 0;
 
       if (width > x + lastCharWidth / 2) {
         right = mid;
@@ -1958,8 +2612,8 @@ function calculateMousePosition(lines: Lines, e: MouseEvent): null | { left: num
   }
 }
 
-function measureTextWidth(text: string) {
-  let lineToMeasure = document.getElementById('lineToMeasure');
+function measureTextWidth(paneId: number, text: string) {
+  let lineToMeasure = document.querySelector(`#pane${paneId} #lineToMeasure`);
   if (lineToMeasure === null) {
     lineToMeasure = document.createElement('div');
     lineToMeasure.id = 'lineToMeasure';
@@ -1972,7 +2626,7 @@ function measureTextWidth(text: string) {
 
 function findComment(regex: RegExp, str: string) {
   const captures = regex.exec(str);
-  if (captures == null) return null;
+  if (captures === null) return null;
   const length = captures.slice(1).reduce((a, b) => a + (b ? b.length : 0), 0)
   return {
     text: str.slice(captures.index, captures.index + length),
@@ -1983,7 +2637,7 @@ function findComment(regex: RegExp, str: string) {
 }
 function findStringLiteral(regex: RegExp, str: string) {
   const captures = regex.exec(str);
-  if (captures == null) return null;
+  if (captures === null) return null;
   let text, start, end, data;
   if (captures.length === 1) {
     text = captures[0];
@@ -2004,7 +2658,7 @@ function findStringLiteral(regex: RegExp, str: string) {
 const escapesInRawStringLiteral = /\\`/g;
 function findRawStringLiteral(regex: RegExp, str: string) {
   const captures = regex.exec(str);
-  if (captures == null) return null;
+  if (captures === null) return null;
   let text = captures[0];
   if (text.endsWith('`')) {
     const startBackQuoteIndex = text.indexOf('`');
@@ -2027,13 +2681,22 @@ function findRawStringLiteral(regex: RegExp, str: string) {
 }
 function findCharLiteral(regex: RegExp, str: string) {
   const captures = regex.exec(str);
-  if (captures == null) return null;
+  if (captures === null) return null;
   let text = captures[2];
   return {
     text: "'" + text + (captures[3] ? "'" : ''),
     start: captures.index,
     end: captures.index + text.length + (captures[3] === undefined ? 1 : 2),
     data: "'" + text + "'",
+  };
+}
+function findNumberLiteral(regex: RegExp, str: string) {
+  const captures = regex.exec(str);
+  if (captures === null) return null;
+  return {
+    text: captures[0],
+    start: captures.index,
+    end: captures.index + captures[0].length,
   };
 }
 
