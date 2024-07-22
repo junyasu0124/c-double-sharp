@@ -313,12 +313,12 @@ class Pane {
 const panes: Pane[] = [];
 let selectedPaneId = 0;
 
-const originalColor = '#fff'; // white
-const commentColor = '#6a9955'; // green
-const stringColor = '#ce9178'; // orange
-const varColor = '#9cdcfe'; // light blue
-const keywordColor = '#569cd6'; // blue
-const controlColor = '#c586c0'; // pink
+const originalColor = '#000'; // black
+const commentColor = '#008000'; // green
+const stringColor = '#a31515'; // orange
+const varColor = '#001080'; // dark blue
+const keywordColor = '#0000ff'; // blue
+const controlColor = '#af00db'; // pink
 const accessibilityKeywordColor = '#3872df'; // dark blue
 
 const worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
@@ -340,7 +340,7 @@ document.addEventListener('DOMContentLoaded', () => {
     { id: 'literal.string', color: stringColor },
     { id: 'literal.raw-string', color: stringColor },
     { id: 'literal.char', color: stringColor },
-    { id: 'literal.number', color: '#b5cea8' },
+    { id: 'literal.number', color: '#098658' },
 
     { id: 'operator', color: originalColor },
 
@@ -359,21 +359,29 @@ document.addEventListener('DOMContentLoaded', () => {
     { id: 'keyword.accessor', color: keywordColor },
     { id: 'keyword.other', color: keywordColor },
 
-    { id: 'name.class', color: '#4ec9b0' },
-    { id: 'name.struct', color: '#4ec9b0' },
-    { id: 'name.fn', color: '#dcdcaa' },
+    { id: 'name.class', color: '#267f99' },
+    { id: 'name.struct', color: '#267f99' },
+    { id: 'name.fn', color: '#795e26' },
     { id: 'name.var', color: varColor },
-    { id: 'name.const', color: '#4fc1ff' },
+    { id: 'name.const', color: '#0070c1' },
     { id: 'name.fn-arg', color: varColor },
     { id: 'name.field', color: varColor },
-    { id: 'name.prop', color: originalColor },
-    { id: 'name.enum', color: '#4ec9b0' },
-    { id: 'name.interface', color: '#4ec9b0' },
-    { id: 'name.namespace', color: '#fff' },
+    { id: 'name.prop', color: '#001080' },
+    { id: 'name.enum', color: '#267f99' },
+    { id: 'name.interface', color: '#267f99' },
+    { id: 'name.namespace', color: originalColor },
     { id: 'name.other', color: varColor },
 
     { id: 'modifier.after-at', color: accessibilityKeywordColor },
     { id: 'modifier.other', color: keywordColor },
+  ];
+  pane.decorationsData.backgroundColors = [
+    { id: SELECTION_COLOR_ID, color: '#46f9ff55' },//水色
+    { id: 'fn-args', color: '#d7c96033' },//黄色
+    { id: 'indexer', color: '#ffa70024' },//オレンジ
+    { id: 'fn-type', color: '#e9a2ff26' },//ピンク
+    { id: 'tuple', color: '#2b61ff2b' },//青
+    { id: 'generics', color: '#6bff7126' },//黄緑
   ];
 
   const saved = localStorage.getItem('text') ?? '';
@@ -383,10 +391,6 @@ document.addEventListener('DOMContentLoaded', () => {
       pane.lines.appendLine();
   }
   Line.splitTextAndCreateToken(pane.lines, pane.decorationsData, saved, saved, 0, 0, false, 0, true);
-
-  // Decorations.create(pane.paneId, pane.lines, pane.decorationsData, 0, 0, 2, 'green');
-  // Decorations.create(pane.paneId, pane.lines, pane.decorationsData, 1, 1, 8, 'red');
-  // Decorations.create(pane.paneId, pane.lines, pane.decorationsData, 1, 1, 8, undefined, 'error');
 
   document.onkeydown = (e) => {
     if (e.isComposing || e.keyCode === 243 || e.keyCode === 244) {
@@ -402,15 +406,7 @@ document.addEventListener('DOMContentLoaded', () => {
     pane.keyDown(e);
 
     let tokenId = -1;
-    const tokens: {
-      tokenId: number;
-      text: string;
-      start: number;
-      end: number;
-      category: string | undefined;
-      kind: string | undefined;
-      data?: any;
-    }[] = [];
+    const tokens: BaseToken[] = [];
     let jGoto = 0;
     for (let i = 0; i < panes[0].lines.lines.length; i++) {
       const line = panes[0].lines.lines[i];
@@ -464,12 +460,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
           tokens.push({
             tokenId: token.tokenId,
+            text,
             start: token.start,
             end: panes[0].lines.lines[endTop].tokens[endIndex].end,
-            text,
             category: token.category,
             kind: token.kind,
-          })
+          });
           j = endIndex;
           if (endTop !== i) {
             i = endTop;
@@ -481,9 +477,9 @@ document.addEventListener('DOMContentLoaded', () => {
         } else {
           tokens.push({
             tokenId: token.tokenId,
+            text: token.text,
             start: token.start,
             end: token.end,
-            text: token.text,
             category: token.category,
             kind: token.kind,
             data: token.data,
@@ -493,11 +489,11 @@ document.addEventListener('DOMContentLoaded', () => {
       if (line.tokens.length > 0) {
         tokens.push({
           tokenId: tokenId--,
+          text: '\r\n',
           start: line.tokens[line.tokens.length - 1].end,
           end: line.tokens[line.tokens.length - 1].end,
-          text: '\r\n',
+          category: 'space',
           kind: 'space.line-break',
-          category: 'line_break',
         });
       }
     }
@@ -542,6 +538,14 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
       } else {
         document.getElementById('controlSpace')!.textContent = '';
+
+        for (let [id, kind] of e.data.modified as [number, Kind | undefined][]) {
+          const element = document.getElementById(`token${id}`);
+          if (element !== null) {
+            element.style.color = panes[0].decorationsData.colors.find(color => color.id === kind)?.color ?? '';
+          }
+        }
+
         for (let i = 0; i < panes[0].lines.lines.length; i++) {
           const line = panes[0].lines.lines[i];
           for (let token of line.tokens) {
@@ -551,7 +555,9 @@ document.addEventListener('DOMContentLoaded', () => {
             }
           }
         }
+
         panes[1].lines.deleteRange({ left: 0, top: 0 }, { left: panes[1].lines.lines[panes[1].lines.lines.length - 1].length, top: panes[1].lines.lines.length - 1 });
+
         const split = (e.data.converted as string).split(splitByLineBreak);
         panes[1].lines.lines[0].insertText(split[0], 0);
         for (let i = 1; i < split.length; i++) {
@@ -571,7 +577,7 @@ document.addEventListener('DOMContentLoaded', () => {
               }
             }
           }
-          Decorations.create(panes[0].paneId, panes[0].lines, panes[0].decorationsData, left, top, decoration.end - decoration.start, 'red');
+          Decorations.create(panes[0].paneId, panes[0].lines, panes[0].decorationsData, left, top, decoration.end - decoration.start, decoration.kind);
         }
       }
     };
@@ -2349,7 +2355,7 @@ class DecorationsData {
 
 type DecorationType = 'selection' | 'error' | undefined;
 class Decorations {
-  public static create(paneId: number, lines: Lines, decorationsData: DecorationsData, left: number, top: number, length: number, colorId?: string, type?: DecorationType) {
+  public static create(paneId: number, lines: Lines, decorationsData: DecorationsData, left: number, top: number, length: number, colorId?: string, type?: DecorationType, doNotCreateIfSameExist = false) {
     if (lines.lines[top].tokens.length === 0 || length <= 0)
       return;
 
@@ -2364,18 +2370,17 @@ class Decorations {
     if (firstTokenIndex === -1)
       return;
     let lastTokenIndex = findLastIndex(lines.lines[top].tokens, token => token.start < leftAtStartEnd + length);
-    const decorations: Decoration[] = [];
     if (lastTokenIndex === -1) {
       lastTokenIndex = lines.lines[top].tokens.length - 1;
     }
 
     if (firstTokenIndex === lastTokenIndex) {
-      decorations.push(Decoration.create(paneId, decorationsData, lines.lines[top].tokens[firstTokenIndex], leftAtStartEnd - lines.lines[top].tokens[firstTokenIndex].start, length, colorId, type).decoration);
+      Decoration.create(paneId, decorationsData, lines.lines[top].tokens[firstTokenIndex], leftAtStartEnd - lines.lines[top].tokens[firstTokenIndex].start, length, colorId, type, false, doNotCreateIfSameExist).decoration;
     } else {
-      decorations.push(Decoration.create(paneId, decorationsData, lines.lines[top].tokens[firstTokenIndex], leftAtStartEnd - lines.lines[top].tokens[firstTokenIndex].start, lines.lines[top].tokens[firstTokenIndex].text.length - (leftAtStartEnd - lines.lines[top].tokens[firstTokenIndex].start), colorId, type).decoration);
+      Decoration.create(paneId, decorationsData, lines.lines[top].tokens[firstTokenIndex], leftAtStartEnd - lines.lines[top].tokens[firstTokenIndex].start, lines.lines[top].tokens[firstTokenIndex].text.length - (leftAtStartEnd - lines.lines[top].tokens[firstTokenIndex].start), colorId, type, false, doNotCreateIfSameExist).decoration;
       for (let i = firstTokenIndex + 1; i < lastTokenIndex; i++)
-        decorations.push(Decoration.create(paneId, decorationsData, lines.lines[top].tokens[i], 0, lines.lines[top].tokens[i].text.length, colorId, type).decoration);
-      decorations.push(Decoration.create(paneId, decorationsData, lines.lines[top].tokens[lastTokenIndex], 0, leftAtStartEnd + length - lines.lines[top].tokens[lastTokenIndex].start, colorId, type).decoration);
+        Decoration.create(paneId, decorationsData, lines.lines[top].tokens[i], 0, lines.lines[top].tokens[i].text.length, colorId, type, false, doNotCreateIfSameExist).decoration;
+      Decoration.create(paneId, decorationsData, lines.lines[top].tokens[lastTokenIndex], 0, leftAtStartEnd + length - lines.lines[top].tokens[lastTokenIndex].start, colorId, type, false, doNotCreateIfSameExist).decoration;
     }
   }
 }
@@ -2405,7 +2410,7 @@ class Decoration {
     this.type = type;
   }
 
-  public static create(paneId: number, decorationsData: DecorationsData, token: Token, offset: number, length: number, colorId?: string, type?: 'selection' | undefined, extensionOfLineBreak = false): { decoration: Decoration, element: HTMLSpanElement } {
+  public static create(paneId: number, decorationsData: DecorationsData, token: Token, offset: number, length: number, colorId?: string, type?: 'selection' | undefined, extensionOfLineBreak = false, doNotCreateIfSameExist = false): { decoration: Decoration, element: HTMLSpanElement } {
     if (token.element === undefined)
       throw new UnhandledError();
 
@@ -2445,6 +2450,13 @@ class Decoration {
       element.style.width = `${measureTextWidth(paneId, token.text.slice(offset, offset + length))}px`;
 
     if (createdNewElement) {
+      if (doNotCreateIfSameExist) {
+        const existingDecoration = token.decorations.find(decoration => decoration.offset === offset && decoration.length === length && decoration.colorId === colorId && decoration.type === type);
+        if (existingDecoration !== undefined) {
+          element.remove();
+          return { decoration: existingDecoration, element: existingDecoration.element };
+        }
+      }
       token.element.prepend(element);
     }
 

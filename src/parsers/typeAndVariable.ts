@@ -1,5 +1,5 @@
-import { BaseToken as Token } from '../main';
-import { SyntaxError, isAccessor, removeEmptyWords } from '../convert';
+import { BaseToken } from '../main';
+import { SyntaxError, changeKind, decorations, isAccessor, removeEmptyWords } from '../convert';
 
 export type { Variable, Type };
 export { parseArgsAndReturned, parseArgs, convertType, parseType, parseFunctionType };
@@ -45,8 +45,8 @@ interface TupleType {
 interface QualifiedName {
   name: NormalType | GenericsType;
   accessor: '.' | '?.' | '!.' | '';
-  nameToken: Token;
-  accessorToken: Token;
+  nameToken: BaseToken;
+  accessorToken: BaseToken;
 }
 
 const builtinTypes = ['bool', 'byte', 'sbyte', 'char', 'decimal', 'double', 'float', 'int', 'uint', 'nint', 'nuint', 'long', 'ulong', 'short', 'ushort', 'object', 'string', 'dynamic', 'void'];
@@ -55,15 +55,15 @@ function isBuiltinType(type: string) {
 }
 
 
-function parseArgsAndReturned(tokens: Token[]) {
-  tokens = removeEmptyWords(tokens, true);
+function parseArgsAndReturned(tokens: BaseToken[]) {
+  tokens = removeEmptyWords(tokens);
 
   const argsAndReturned = parseFunctionType(tokens, true, true, false, false);
 
   return argsAndReturned.type;
 }
-function parseArgs(tokens: Token[]) {
-  tokens = removeEmptyWords(tokens, true);
+function parseArgs(tokens: BaseToken[]) {
+  tokens = removeEmptyWords(tokens);
 
   const args: Variable[] = [];
   let i = 0;
@@ -73,8 +73,10 @@ function parseArgs(tokens: Token[]) {
       throw new SyntaxError(tokens[i]);
     args.push(variable.variable);
     i += variable.endAt;
-    if (i >= tokens.length)
+    if (i >= tokens.length) {
+      decorations.push({ start: tokens[0].start, end: tokens[tokens.length - 1].end, kind: 'fn-args' });
       break;
+    }
     if (tokens[i].text === ',')
       i++;
     else
@@ -84,7 +86,7 @@ function parseArgs(tokens: Token[]) {
   return args;
 }
 
-function parseVariable(tokens: Token[], isFnArg: boolean, earlyReturn: boolean, nextEarlyReturn: boolean): {
+function parseVariable(tokens: BaseToken[], isFnArg: boolean, earlyReturn: boolean, nextEarlyReturn: boolean): {
   variable: Variable | null;
   endAt: number;
 } {
@@ -124,7 +126,7 @@ function parseVariable(tokens: Token[], isFnArg: boolean, earlyReturn: boolean, 
   if (tokens[colonIndex].text !== ':') {
     throw new SyntaxError(tokens[0], 'Missing colon');
   }
-  tokens[colonIndex - 1].kind = isFnArg ? 'name.fn-arg' : 'name.var';
+  changeKind(tokens[colonIndex - 1], isFnArg ? 'name.fn-arg' : 'name.var', true);
   if (tokens.length < colonIndex + 2) {
     throw new SyntaxError(tokens[colonIndex], 'Missing type');
   }
@@ -198,7 +200,7 @@ function convertType(type: Type, isFunctionArgs = false, isFunctionReturned = fa
 /**
  * @param tokens categoryがspace, line_break, commentのトークンは事前に削除されていること
  */
-function parseType(tokens: Token[], earlyReturn: boolean, nextEarlyReturn: boolean, inGenerics = false): {
+function parseType(tokens: BaseToken[], earlyReturn: boolean, nextEarlyReturn: boolean, inGenerics = false): {
   type: Type | null;
   endAt: number
 } {
@@ -213,13 +215,14 @@ function parseType(tokens: Token[], earlyReturn: boolean, nextEarlyReturn: boole
   if (tokens.length === 1) {
     if (tokens[0].category !== 'context_keyword' && tokens[0].category !== 'keyword' && tokens[0].category !== undefined)
       throw new SyntaxError(tokens[0]);
-    tokens[0].kind = isBuiltinType(tokens[0].text) ? 'keyword.builtin-type' : 'name.other';
+    changeKind(tokens[0], 'name.other');
     return {
       type: { type: tokens[0].text } as NormalType,
       endAt: 1
     };
   }
   if (tokens.find(x => isAccessor(x.text) === false && x.category !== 'keyword' && x.category !== 'context_keyword') === undefined) {
+    tokens.forEach(x => changeKind(x, 'name.other'));
     return {
       type: { type: tokens.map(x => x.text).join('') } as NormalType,
       endAt: tokens.length
@@ -229,10 +232,11 @@ function parseType(tokens: Token[], earlyReturn: boolean, nextEarlyReturn: boole
   let qualifiedNamesOfType: QualifiedName[] = [];
 
   let i = 0;
+  let latestTypeStartToken: BaseToken | null = null;
+  let tupleStartToken: BaseToken | null = null;
   while (i < tokens.length) {
     const current = tokens[i];
     if (current.text === '(' && current.category === 'operator') {
-      tokens[i].kind = 'bracket.parenthesis';
       if (typeType !== null && typeType !== 'tuple' && (tokens.length !== 0 && isAccessor(tokens[i + 1].text)) === false) {
         throw new SyntaxError(current);
       }
@@ -247,10 +251,10 @@ function parseType(tokens: Token[], earlyReturn: boolean, nextEarlyReturn: boole
             if (j === i + 1) {
               throw new SyntaxError({ content: '()', start: tokens[i].start, end: tokens[i].start + 1 }, 'Cannot have empty parentheses');
             }
-            tokens[j].kind = 'bracket.parenthesis';
             const innerType = parseType(tokens.slice(i + 1, j), false, nextEarlyReturn);
             if (tokens.length > j + 1 && isAccessor(tokens[j + 1].text)) {
               if (innerType.type !== null && 'type' in innerType.type) {
+                latestTypeStartToken ??= tokens[i];
                 qualifiedNamesOfType.push({ name: innerType.type, accessor: tokens[j + 1].text as '.' | '?.' | '!.', nameToken: tokens[i + 1], accessorToken: tokens[j + 1] });
                 i = j + 2;
               } else {
@@ -259,6 +263,7 @@ function parseType(tokens: Token[], earlyReturn: boolean, nextEarlyReturn: boole
             } else {
               if (typeType === null) {
                 type = innerType.type;
+                latestTypeStartToken = tokens[i];
               } else if (typeType === 'tuple') {
                 if (innerType.type === null)
                   throw new SyntaxError(tokens[j + 1]);
@@ -302,12 +307,16 @@ function parseType(tokens: Token[], earlyReturn: boolean, nextEarlyReturn: boole
         continue;
       } else if (current.text === '~') {
         if (earlyReturn) {
+          if (typeType === 'tuple' && tupleStartToken !== null) {
+            decorations.push({ start: tupleStartToken.start, end: tokens[i - 1].end, kind: 'tuple' });
+          }
           break;
         }
         if (typeType === 'tuple') {
           i++;
           continue;
         } else {
+          tupleStartToken = latestTypeStartToken;
           type = { types: [type] } as TupleType;
           typeType = 'tuple';
           i++;
@@ -342,6 +351,9 @@ function parseType(tokens: Token[], earlyReturn: boolean, nextEarlyReturn: boole
           return type;
         }
       } else if (current.text === ',' || current.text === '/' || current.text === '=>' || current.text === '{' || current.text === ';' || current.text === '=') {
+        if (typeType === 'tuple' && tupleStartToken !== null) {
+          decorations.push({ start: tupleStartToken.start, end: tokens[i - 1].end, kind: 'tuple' });
+        }
         break;
       } else {
         throw new SyntaxError(current);
@@ -352,12 +364,12 @@ function parseType(tokens: Token[], earlyReturn: boolean, nextEarlyReturn: boole
       } else if (tokens[i + 2].category !== 'context_keyword' && tokens[i + 2].category !== 'keyword' && tokens[i + 2].category !== undefined && tokens[i + 2].text !== '(') {
         throw new SyntaxError(tokens[i + 2]);
       }
-      current.kind = 'name.other';
+      changeKind(current, 'name.other');
+      latestTypeStartToken ??= current;
       qualifiedNamesOfType.push({ name: { type: current.text } as NormalType, accessor: tokens[i + 1].text as '.' | '?.' | '!.', nameToken: current, accessorToken: tokens[i + 1] });
       i += 2;
     }
     else if (current.text === 'fn' && current.category === 'keyword') {
-      current.kind = 'keyword.declarator';
       let nullable = false;
       if (i + 1 < tokens.length && tokens[i + 1].text === '?') {
         nullable = true;
@@ -375,6 +387,7 @@ function parseType(tokens: Token[], earlyReturn: boolean, nextEarlyReturn: boole
       if (typeType !== null && typeType !== 'tuple') {
         throw new SyntaxError(tokens[i + 2], 'Unexpected function type');
       }
+      decorations.push({ start: current.start, end: tokens[i + 2 + functionType.endAt - 1].end, kind: 'fn-type' });
 
       if (nullable)
         functionType.type.nullable = true;
@@ -383,6 +396,7 @@ function parseType(tokens: Token[], earlyReturn: boolean, nextEarlyReturn: boole
         (type as TupleType).types.push(functionType.type);
         i += 2 + functionType.endAt;
       } else {
+        latestTypeStartToken = current;
         type = functionType.type;
         typeType = 'function';
         i += 2 + functionType.endAt;
@@ -394,6 +408,8 @@ function parseType(tokens: Token[], earlyReturn: boolean, nextEarlyReturn: boole
         throw new SyntaxError(tokens[i], 'Unexpected generics type');
       }
 
+      decorations.push({ start: tokens[i + 2].start, end: tokens[i + genericsType.endAt].end, kind: 'generics' });
+
       genericsType.type.type.type = genericsType.type.type.type;
       if (qualifiedNamesOfType.length !== 0)
         genericsType.type.qualifiedNames = qualifiedNamesOfType;
@@ -401,6 +417,7 @@ function parseType(tokens: Token[], earlyReturn: boolean, nextEarlyReturn: boole
         (type as TupleType).types.push(genericsType.type);
         i += genericsType.endAt;
       } else {
+        latestTypeStartToken = current;
         type = genericsType.type;
         typeType = 'generics';
         i += genericsType.endAt;
@@ -414,6 +431,8 @@ function parseType(tokens: Token[], earlyReturn: boolean, nextEarlyReturn: boole
       if (typeType === 'tuple') {
         (type as TupleType).types.push({ name: tupleVariable.variable?.name ?? '', type: tupleVariable.variable?.type ?? { type: '' } } as Variable);
       } else {
+        latestTypeStartToken = current;
+        tupleStartToken ??= current;
         type = { types: [{ name: tupleVariable.variable?.name ?? '', type: tupleVariable.variable?.type ?? { type: '' } }] } as TupleType;
         typeType = 'tuple';
       }
@@ -421,15 +440,17 @@ function parseType(tokens: Token[], earlyReturn: boolean, nextEarlyReturn: boole
     } else if (current.text === 'global') {
       if (i !== 0 || (tokens.length > 2 && tokens[i + 1].text !== '::'))
         throw new SyntaxError(current);
+      latestTypeStartToken ??= current;
       qualifiedNamesOfType.push({ name: { type: 'global::' }, accessor: '', nameToken: current, accessorToken: tokens[i + 1] });
       i += 2;
     } else {
-      current.kind = isBuiltinType(current.text) ? 'keyword.builtin-type' : 'name.other';
+      changeKind(current, 'name.other');
       if (typeType === null) {
         if (qualifiedNamesOfType.length !== 0) {
           type = { type: current.text, qualifiedNames: qualifiedNamesOfType } as NormalType;
           qualifiedNamesOfType = [];
         } else {
+          latestTypeStartToken = current;
           type = { type: current.text } as NormalType;
         }
         typeType = 'normal';
@@ -446,13 +467,17 @@ function parseType(tokens: Token[], earlyReturn: boolean, nextEarlyReturn: boole
     throw new SyntaxError(tokens[0], 'Missing type');
   }
 
+  if (typeType === 'tuple' && tupleStartToken !== null) {
+    decorations.push({ start: tupleStartToken.start, end: tokens[tokens.length - 1].end, kind: 'tuple' });
+  }
+
   return {
     type: type,
     endAt: i
   };
 }
 
-function parseFunctionType(tokens: Token[], hasArgsName: Boolean, atFnDeclaration: boolean, earlyReturn: boolean, nextEarlyReturn: boolean) {
+function parseFunctionType(tokens: BaseToken[], hasArgsName: Boolean, atFnDeclaration: boolean, earlyReturn: boolean, nextEarlyReturn: boolean) {
   let args: Variable[] | null = [];
   let returned: Type;
 
@@ -511,7 +536,7 @@ function parseFunctionType(tokens: Token[], hasArgsName: Boolean, atFnDeclaratio
     endAt: i + returnedType.endAt + 1
   };
 }
-function parseGenericsType(tokens: Token[], earlyReturn: boolean, nextEarlyReturn: boolean, inGenerics = false) {
+function parseGenericsType(tokens: BaseToken[], earlyReturn: boolean, nextEarlyReturn: boolean, inGenerics = false) {
   let type: Type;
   let params: Type[] = [];
 

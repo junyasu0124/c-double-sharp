@@ -27,7 +27,7 @@ function convertSwitch(tokens: BaseToken[], insertIndex: number, assigningType: 
 
   let i = 1;
 
-  const removed = removeEmptyWords(tokens, true);
+  const removed = removeEmptyWords(tokens);
   const leftBraceIndex = removed.findIndex(token => token.text === '{');
   if (leftBraceIndex === -1) {
     throw new SyntaxError(removed[i]);

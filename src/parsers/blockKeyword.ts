@@ -13,7 +13,7 @@ export { convertBlockKeyword };
  */
 function convertBlockKeyword(tokens: BaseToken[], insertIndex: number, assigningType: null | true | Type, indentLevel: number, changeToYieldReturn = false): number {
   if (tokens.length === 0)
-    throw new UnhandledError();
+    throw new UnhandledError(null, '1');
   if (tokens[0].category !== 'keyword')
     throw new UnhandledError(tokens[0]);
 
