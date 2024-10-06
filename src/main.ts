@@ -1,4 +1,4 @@
-import { BaseDecoration, Category, Kind, SyntaxError, UnhandledError, contextKeywords, decorations, indentCount, keywords, kindOfKeywordOrModifier, operators } from "./convert";
+import { BaseDecoration, Category, Kind, SyntaxError, UnhandledError, contextKeywords, indentCount, keywords, kindOfKeywordOrModifier, operators } from "./convert";
 import { debounce, repaint, findLast, findLastIndex } from "./functions";
 
 export type { BaseToken };

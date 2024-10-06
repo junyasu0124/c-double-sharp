@@ -228,7 +228,3 @@ function convertBlockKeyword(tokens: BaseToken[], insertIndex: number, assigning
     }
   }
 }
-
-// const keywordsOfBlockWithExpr = new Set(['for', 'foreach', 'while', 'elif', 'else', 'if', 'catch', 'switch', 'fixed', 'lock', 'do']);
-// const keywordsOfBlockWithoutExpr = new Set(['try', 'finally']);
-// const keywordsOfBlockOrMethod = new Set(['checked', 'unchecked']);
