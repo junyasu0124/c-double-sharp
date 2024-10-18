@@ -492,7 +492,7 @@ document.addEventListener('DOMContentLoaded', () => {
           text: '\r\n',
           start: line.tokens[line.tokens.length - 1].end,
           end: line.tokens[line.tokens.length - 1].end,
-          category: 'space',
+          category: 'line_break',
           kind: 'space.line-break',
         });
       }
@@ -1489,7 +1489,7 @@ class Line {
       text: string;
       start: number;
       end: number;
-      category: Category | undefined;
+      category: Category;
       kind?: Kind | undefined;
     }
     const words: Word[] = [];
@@ -2198,7 +2198,7 @@ interface BaseToken {
   text: string;
   start: number;
   end: number;
-  category: Category | undefined;
+  category: Category;
   kind: Kind | undefined;
   data?: any;
 }

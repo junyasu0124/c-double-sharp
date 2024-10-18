@@ -179,7 +179,7 @@ interface BaseDecoration { start: number, end: number, kind: 'fn-args' | 'indexe
 let indentCount = 2;
 let converted: string[] = [];
 let decorations: BaseDecoration[] = [];
-let modified: [number, Kind | undefined][] = []
+let modified: [number, Kind | undefined][] = [];
 
 type BlockType = 'none' | 'namespace' | 'class' | 'struct' | 'fn';
 
@@ -207,7 +207,6 @@ function changeKind(token: BaseToken, kind: Kind | undefined, force = false) {
 }
 
 /**
- * 
  * @param tokens space, line_break, commentを除く前のトークン
  * @param indentLevel 
  * @param container 
@@ -242,1954 +241,2022 @@ function convertBlock(tokens: BaseToken[], container: BlockType, indentLevel: nu
   function isModifiersChanged() {
     return modifiers.inheritance !== null || modifiers.refImmut !== null || modifiers.async || modifiers.yield || modifiers.partial;
   }
+  function arrayDeepCopy<T>(array: T[]): T[] {
+    const newArray: T[] = [];
+    for (let i = 0; i < array.length; i++) {
+      newArray.push(array[i]);
+    }
+    return newArray;
+  }
+  function baseInfoArraysDeelCopy() {
+    return {
+      converted: arrayDeepCopy(converted),
+      decorations: arrayDeepCopy(decorations),
+      modified: arrayDeepCopy(modified),
+    }
+  }
+
+  let testingFnTokens: { index: number, tokenId: number, originalKind: Kind | undefined }[] = [];
+  let lastSuccessful: { converted: string[], decorations: BaseDecoration[], modified: [number, Kind | undefined][], i: number, previousI: number } | null = null;
+  function revert() {
+    if (lastSuccessful === null) return;
+    converted = arrayDeepCopy(lastSuccessful.converted);
+    decorations = arrayDeepCopy(lastSuccessful.decorations);
+    modified = arrayDeepCopy(lastSuccessful.modified);
+    i = lastSuccessful.i;
+    previousI = lastSuccessful.previousI;
+  }
 
   let i = 0;
   let previousI = -1;
-  while (i < tokens.length) {
-    const current = tokens[i];
 
-    if (current.category === 'line_break' && i + 1 < tokens.length && tokens[i + 1].category === 'line_break') {
-      for (let j = i + 1; j < tokens.length; j++) {
-        if (tokens[j].category !== 'line_break')
-          break;
-        converted.push('\r\n');
-        i++;
+  let errored = false;
+  let result = 0;
+  while (true) {
+    try {
+      result = innerFn(i, previousI, errored);
+    } catch (e) {
+      if (e instanceof SyntaxError || e instanceof UnhandledError) {
+        if (lastSuccessful === null || testingFnTokens.length === 0)
+          throw e;
+
+        revert();
+        errored = true;
+      } else {
+        throw e;
       }
-    } else if (current.category === 'keyword') {
-      converted.push(' '.repeat(indentLevel * indentCount));
+      continue;
+    }
+    return result;
+  }
 
-      switch (current.text) {
-        case 'class': {
-          if (container !== 'none' && container !== 'namespace') {
-            throw new SyntaxError(current, 'Cannot declare class here');
-          }
+  function innerFn(i: number, previousI: number, errored: boolean) {
+    while (i < tokens.length) {
+      const originalI = i;
+      const current = tokens[i];
+      const copied = baseInfoArraysDeelCopy();
 
-          let leftBraceIndex = -1;
-          for (let j = i + 1; j < tokens.length; j++) {
-            if (tokens[j].text === '{') {
-              leftBraceIndex = j;
-              break;
-            } else if (tokens[j].text === 'switch' || (tokens[j].text === '=>' && isNext(token => token.text === '{', true, j, tokens, false, false))) {
-              let braceCount = 0;
-              let rightBraceIndex = -1;
-              for (let k = j + 1; k < tokens.length; k++) {
-                if (tokens[k].text === '{')
-                  braceCount++;
-                else if (tokens[k].text === '}') {
-                  braceCount--;
-                  if (braceCount === 0) {
-                    rightBraceIndex = k;
-                    break;
-                  }
-                }
-              }
-              if (rightBraceIndex === -1)
-                throw new SyntaxError(current, 'Missing right brace');
-              j = rightBraceIndex;
+      if (current.category === 'line_break' && i + 1 < tokens.length && tokens[i + 1].category === 'line_break') {
+        for (let j = i + 1; j < tokens.length; j++) {
+          if (tokens[j].category !== 'line_break')
+            break;
+          converted.push('\r\n');
+          i++;
+        }
+      } else if (current.category === 'keyword') {
+        converted.push(' '.repeat(indentLevel * indentCount));
+
+        switch (current.text) {
+          case 'class': {
+            if (container !== 'none' && container !== 'namespace') {
+              throw new SyntaxError(current, 'Cannot declare class here');
             }
-          }
-          if (leftBraceIndex === -1) {
-            throw new SyntaxError(current, 'Missing left brace');
-          }
 
-          const atIndex = tokens.findIndex((s, j) => j > i && j < leftBraceIndex && s.text == '@');
-          if (atIndex != -1) {
-            const modifiers = searchModifiers(tokens.slice(atIndex + 1, leftBraceIndex));
-            converted.push(...modifiers.map(x => x.text + ' '));
-          }
-
-          if (modifiers.inheritance !== null) {
-            if (modifiers.inheritance[0] !== 'abstract')
-              throw new SyntaxError(modifiers.inheritance[1], `${modifiers.inheritance[0]} is not allowed for class`);
-            converted.push(`${modifiers.inheritance[0]} `);
-          }
-          if (modifiers.refImmut !== null) {
-            throw new SyntaxError(modifiers.refImmut[1], `${modifiers.refImmut[0]} is not allowed for class`);
-          }
-          if (modifiers.async)
-            throw new SyntaxError(modifiers.async[1], 'async is not allowed for class');
-          if (modifiers.yield)
-            throw new SyntaxError(modifiers.yield[1], 'yield is not allowed for class');
-          if (modifiers.partial)
-            converted.push('partial ');
-          resetModifiers();
-
-          const className = isNext(() => true, true, i, tokens, false, true) as { result: boolean, index: number };
-          if (className.result === false || className.index === i + 1) {
-            throw new SyntaxError(tokens[className.index]);
-          }
-          const classNameIndex = className.index;
-          if (tokens[classNameIndex].category !== undefined && tokens[classNameIndex].category !== 'context_keyword') {
-            throw new SyntaxError(tokens[classNameIndex]);
-          }
-          changeKind(tokens[classNameIndex], 'name.class', true);
-          if (tokens[classNameIndex].text === '_' || tokens[classNameIndex].text.startsWith(autoModifiedVarNamePrefix) || tokens[classNameIndex].text.startsWith('__'))
-            throw new SyntaxError(tokens[classNameIndex], 'Cannot use this class name');
-
-          const inheritanceIndex = tokens.findIndex((s, j) => j > classNameIndex && j < leftBraceIndex && s.text == '->');
-          const inheritances: string[] = [];
-          if (inheritanceIndex !== -1) {
-            let currentInheritance = '';
-            let j = inheritanceIndex + 1;
-            while (j < (atIndex === -1 ? leftBraceIndex : atIndex)) {
-              const current = tokens[j];
-              if (current.category === 'space' || current.category === 'line_break' || current.category === 'comment') {
-                j++;
-                continue;
-              }
-              const nextIndex = isNext(() => true, true, j, tokens, false, true) as { result: boolean, index: number };
-              if (nextIndex.index === -1)
-                throw new SyntaxError(tokens[j]);
-              if (nextIndex.index >= (atIndex === -1 ? leftBraceIndex : atIndex)) {
-                if (currentInheritance !== '\0')
-                  inheritances.push(currentInheritance + current.text);
+            let leftBraceIndex = -1;
+            for (let j = i + 1; j < tokens.length; j++) {
+              if (tokens[j].text === '{') {
+                leftBraceIndex = j;
                 break;
-              }
-              const next = tokens[nextIndex.index];
-              if (next.text === '.') {
-                currentInheritance += current.text + '.';
-                j = nextIndex.index + 1;
-              } else if (next.text === ',') {
-                if (currentInheritance !== '\0') {
-                  currentInheritance += current.text;
-                  inheritances.push(currentInheritance);
-                }
-                currentInheritance = '';
-                j = nextIndex.index + 1;
-              } else if (next.text === '-') {
-                changeKind(tokens[j], 'name.other');
-                currentInheritance += current.text;
-                let genericsParamsEndIndex = j;
-                let isAtSeparator = true;
-                const genericsParams: BaseToken[] = [];
-                let isFirst = true;
-                for (let k = tokens.findIndex(x => x.tokenId === next.tokenId) + 1; k < (atIndex === -1 ? leftBraceIndex : atIndex); k++) {
-                  if (tokens[k].category === 'space' || tokens[k].category === 'line_break' || tokens[k].category === 'comment') {
-                    continue;
+              } else if (tokens[j].text === 'switch' || (tokens[j].text === '=>' && isNext(token => token.text === '{', true, j, tokens, false, false))) {
+                let braceCount = 0;
+                let rightBraceIndex = -1;
+                for (let k = j + 1; k < tokens.length; k++) {
+                  if (tokens[k].text === '{')
+                    braceCount++;
+                  else if (tokens[k].text === '}') {
+                    braceCount--;
+                    if (braceCount === 0) {
+                      rightBraceIndex = k;
+                      break;
+                    }
                   }
-                  if (isFirst) {
-                    decorations.push({ start: tokens[k].start, end: -1, kind: 'generics' });
-                    isFirst = false;
+                }
+                if (rightBraceIndex === -1)
+                  throw new SyntaxError(current, 'Missing right brace');
+                j = rightBraceIndex;
+              }
+            }
+            if (leftBraceIndex === -1) {
+              throw new SyntaxError(current, 'Missing left brace');
+            }
+
+            const atIndex = tokens.findIndex((s, j) => j > i && j < leftBraceIndex && s.text == '@');
+            if (atIndex != -1) {
+              const modifiers = searchModifiers(tokens.slice(atIndex + 1, leftBraceIndex));
+              converted.push(...modifiers.map(x => x.text + ' '));
+            }
+
+            if (modifiers.inheritance !== null) {
+              if (modifiers.inheritance[0] !== 'abstract')
+                throw new SyntaxError(modifiers.inheritance[1], `${modifiers.inheritance[0]} is not allowed for class`);
+              converted.push(`${modifiers.inheritance[0]} `);
+            }
+            if (modifiers.refImmut !== null) {
+              throw new SyntaxError(modifiers.refImmut[1], `${modifiers.refImmut[0]} is not allowed for class`);
+            }
+            if (modifiers.async)
+              throw new SyntaxError(modifiers.async[1], 'async is not allowed for class');
+            if (modifiers.yield)
+              throw new SyntaxError(modifiers.yield[1], 'yield is not allowed for class');
+            if (modifiers.partial)
+              converted.push('partial ');
+            resetModifiers();
+
+            const className = isNext(() => true, true, i, tokens, false, true) as { result: boolean, index: number };
+            if (className.result === false || className.index === i + 1) {
+              throw new SyntaxError(tokens[className.index]);
+            }
+            const classNameIndex = className.index;
+            if (tokens[classNameIndex].category !== undefined && tokens[classNameIndex].category !== 'context_keyword') {
+              throw new SyntaxError(tokens[classNameIndex]);
+            }
+            changeKind(tokens[classNameIndex], 'name.class', true);
+            if (tokens[classNameIndex].text === '_' || tokens[classNameIndex].text.startsWith(autoModifiedVarNamePrefix) || tokens[classNameIndex].text.startsWith('__'))
+              throw new SyntaxError(tokens[classNameIndex], 'Cannot use this class name');
+
+            const inheritanceIndex = tokens.findIndex((s, j) => j > classNameIndex && j < leftBraceIndex && s.text == '->');
+            const inheritances: string[] = [];
+            if (inheritanceIndex !== -1) {
+              let currentInheritance = '';
+              let j = inheritanceIndex + 1;
+              while (j < (atIndex === -1 ? leftBraceIndex : atIndex)) {
+                const current = tokens[j];
+                if (current.category === 'space' || current.category === 'line_break' || current.category === 'comment') {
+                  j++;
+                  continue;
+                }
+                const nextIndex = isNext(() => true, true, j, tokens, false, true) as { result: boolean, index: number };
+                if (nextIndex.index === -1)
+                  throw new SyntaxError(tokens[j]);
+                if (nextIndex.index >= (atIndex === -1 ? leftBraceIndex : atIndex)) {
+                  if (currentInheritance !== '\0')
+                    inheritances.push(currentInheritance + current.text);
+                  break;
+                }
+                const next = tokens[nextIndex.index];
+                if (next.text === '.') {
+                  currentInheritance += current.text + '.';
+                  j = nextIndex.index + 1;
+                } else if (next.text === ',') {
+                  if (currentInheritance !== '\0') {
+                    currentInheritance += current.text;
+                    inheritances.push(currentInheritance);
+                  }
+                  currentInheritance = '';
+                  j = nextIndex.index + 1;
+                } else if (next.text === '-') {
+                  changeKind(tokens[j], 'name.other');
+                  currentInheritance += current.text;
+                  let genericsParamsEndIndex = j;
+                  let isAtSeparator = true;
+                  const genericsParams: BaseToken[] = [];
+                  let isFirst = true;
+                  for (let k = tokens.findIndex(x => x.tokenId === next.tokenId) + 1; k < (atIndex === -1 ? leftBraceIndex : atIndex); k++) {
+                    if (tokens[k].category === 'space' || tokens[k].category === 'line_break' || tokens[k].category === 'comment') {
+                      continue;
+                    }
+                    if (isFirst) {
+                      decorations.push({ start: tokens[k].start, end: -1, kind: 'generics' });
+                      isFirst = false;
+                    }
+                    if (isAtSeparator) {
+                      let modifier = '';
+                      if (tokens[k].text === 'in' || tokens[k].text === 'out') {
+                        modifier = tokens[k].text + ' ';
+                        const nextIndex = isNext(() => true, true, k, tokens, false, true) as { result: boolean, index: number };
+                        if (nextIndex.index === -1)
+                          throw new SyntaxError(tokens[k]);
+                        k = nextIndex.index;
+                      } else if (tokens[k].category !== undefined && tokens[k].category !== 'context_keyword' && tokens[k].category !== 'keyword') {
+                        throw new SyntaxError(tokens[k]);
+                      }
+                      changeKind(tokens[k], 'name.other');
+                      tokens[k].text = modifier + tokens[k].text;
+                      genericsParams.push(tokens[k]);
+                      isAtSeparator = false;
+                      genericsParamsEndIndex = k;
+                    } else {
+                      if (tokens[k].text === ',' || tokens[k].text === '@' || tokens[k].text === '{') {
+                        break;
+                      } else if (tokens[k].text === '/') {
+                        isAtSeparator = true;
+                      } else {
+                        throw new SyntaxError(tokens[k]);
+                      }
+                    }
                   }
                   if (isAtSeparator) {
-                    let modifier = '';
-                    if (tokens[k].text === 'in' || tokens[k].text === 'out') {
-                      modifier = tokens[k].text + ' ';
-                      const nextIndex = isNext(() => true, true, k, tokens, false, true) as { result: boolean, index: number };
-                      if (nextIndex.index === -1)
-                        throw new SyntaxError(tokens[k]);
-                      k = nextIndex.index;
-                    } else if (tokens[k].category !== undefined && tokens[k].category !== 'context_keyword' && tokens[k].category !== 'keyword') {
-                      throw new SyntaxError(tokens[k]);
-                    }
-                    changeKind(tokens[k], 'name.other');
-                    tokens[k].text = modifier + tokens[k].text;
-                    genericsParams.push(tokens[k]);
-                    isAtSeparator = false;
-                    genericsParamsEndIndex = k;
-                  } else {
-                    if (tokens[k].text === ',' || tokens[k].text === '@' || tokens[k].text === '{') {
-                      break;
-                    } else if (tokens[k].text === '/') {
-                      isAtSeparator = true;
+                    throw new SyntaxError((isNext(() => true, true, genericsParamsEndIndex, tokens, true, false) as { result: boolean, item: BaseToken | null }).item);
+                  }
+                  if (genericsParams.length === 0) {
+                    throw new SyntaxError(next, 'Missing generics parameter');
+                  }
+                  decorations[decorations.length - 1].end = tokens[genericsParamsEndIndex].end;
+                  j = genericsParamsEndIndex;
+                  inheritances.push(`${currentInheritance}<${genericsParams.map(x => x.text).join(', ')}>`);
+                  currentInheritance = '\0';
+                } else {
+                  const previousKind = current.kind;
+                  current.kind = 'name.fn';
+                  const lengthBefore = converted.length;
+
+                  lastSuccessful = {
+                    converted: copied.converted,
+                    decorations: copied.decorations,
+                    modified: copied.modified,
+                    i: originalI,
+                    previousI: previousI,
+                  };
+                  const rightSide = convertRightSide(tokens.slice(j, (atIndex === -1 ? leftBraceIndex : atIndex)), -1, null, true, indentLevel, testingFnTokens);
+                  testingFnTokens = rightSide.testingFnTokens;
+                  if (converted[converted.length - 1] === ';\r\n') {
+                    converted.pop();
+                  }
+                  current.kind = previousKind;
+                  changeKind(current, 'name.other');
+                  inheritances.push(currentInheritance + converted.slice(lengthBefore).join(''));
+                  converted.splice(lengthBefore);
+                  currentInheritance = '';
+                  j += rightSide.endAt;
+                  for (let k = j; k < (atIndex === -1 ? leftBraceIndex : atIndex); k++) {
+                    if (tokens[k].text === ';') {
+                      j = k + 1;
                     } else {
-                      throw new SyntaxError(tokens[k]);
+                      break;
                     }
                   }
+                  if (tokens[j].text === ',') {
+                    j++;
+                  }
+                }
+              }
+
+              if (inheritances.length === 0)
+                throw new SyntaxError(tokens[inheritanceIndex], 'Missing inheritance');
+            }
+
+            let genericsParamsEndIndex = classNameIndex;
+            const genericsParams: BaseToken[] = [];
+            const genericsParamsAnnotationIndex = isNext(token => token.text === '-', true, classNameIndex, tokens, false, true) as { result: boolean, index: number };
+            if (genericsParamsAnnotationIndex.result) {
+              genericsParamsEndIndex = genericsParamsAnnotationIndex.index;
+              let isAtSeparator = true;
+              let isFirst = true;
+              for (let j = genericsParamsAnnotationIndex.index + 1; j < leftBraceIndex; j++) {
+                if (tokens[j].category === 'space' || tokens[j].category === 'line_break' || tokens[j].category === 'comment') {
+                  continue;
+                }
+                if (isFirst) {
+                  decorations.push({ start: tokens[j].start, end: -1, kind: 'generics' });
+                  isFirst = false;
                 }
                 if (isAtSeparator) {
-                  throw new SyntaxError((isNext(() => true, true, genericsParamsEndIndex, tokens, true, false) as { result: boolean, item: BaseToken | null }).item);
-                }
-                if (genericsParams.length === 0) {
-                  throw new SyntaxError(next, 'Missing generics parameter');
-                }
-                decorations[decorations.length - 1].end = tokens[genericsParamsEndIndex].end;
-                j = genericsParamsEndIndex;
-                inheritances.push(`${currentInheritance}<${genericsParams.map(x => x.text).join(', ')}>`);
-                currentInheritance = '\0';
-              } else {
-                const previousKind = current.kind;
-                current.kind = 'name.fn';
-                const lengthBefore = converted.length;
-                const rightSide = convertRightSide(tokens.slice(j, (atIndex === -1 ? leftBraceIndex : atIndex)), -1, null, true, indentLevel);
-                if (converted[converted.length - 1] === ';\r\n') {
-                  converted.pop();
-                }
-                current.kind = previousKind;
-                changeKind(current, 'name.other');
-                inheritances.push(currentInheritance + converted.slice(lengthBefore).join(''));
-                converted.splice(lengthBefore);
-                currentInheritance = '';
-                j += rightSide.endAt;
-                for (let k = j; k < (atIndex === -1 ? leftBraceIndex : atIndex); k++) {
-                  if (tokens[k].text === ';') {
-                    j = k + 1;
-                  } else {
-                    break;
+                  let modifier = '';
+                  if (tokens[j].text === 'in' || tokens[j].text === 'out') {
+                    modifier = tokens[j].text + ' ';
+                    const nextIndex = isNext(() => true, true, j, tokens, false, true) as { result: boolean, index: number };
+                    if (nextIndex.index === -1)
+                      throw new SyntaxError(tokens[j]);
+                    j = nextIndex.index;
                   }
-                }
-                if (tokens[j].text === ',') {
-                  j++;
-                }
-              }
-            }
-
-            if (inheritances.length === 0)
-              throw new SyntaxError(tokens[inheritanceIndex], 'Missing inheritance');
-          }
-
-          let genericsParamsEndIndex = classNameIndex;
-          const genericsParams: BaseToken[] = [];
-          const genericsParamsAnnotationIndex = isNext(token => token.text === '-', true, classNameIndex, tokens, false, true) as { result: boolean, index: number };
-          if (genericsParamsAnnotationIndex.result) {
-            genericsParamsEndIndex = genericsParamsAnnotationIndex.index;
-            let isAtSeparator = true;
-            let isFirst = true;
-            for (let j = genericsParamsAnnotationIndex.index + 1; j < leftBraceIndex; j++) {
-              if (tokens[j].category === 'space' || tokens[j].category === 'line_break' || tokens[j].category === 'comment') {
-                continue;
-              }
-              if (isFirst) {
-                decorations.push({ start: tokens[j].start, end: -1, kind: 'generics' });
-                isFirst = false;
-              }
-              if (isAtSeparator) {
-                let modifier = '';
-                if (tokens[j].text === 'in' || tokens[j].text === 'out') {
-                  modifier = tokens[j].text + ' ';
-                  const nextIndex = isNext(() => true, true, j, tokens, false, true) as { result: boolean, index: number };
-                  if (nextIndex.index === -1)
-                    throw new SyntaxError(tokens[j]);
-                  j = nextIndex.index;
-                }
-                changeKind(tokens[j], 'name.other');
-                tokens[j].text = modifier + tokens[j].text;
-                genericsParams.push(tokens[j]);
-                isAtSeparator = false;
-                genericsParamsEndIndex = j;
-              } else {
-                if (tokens[j].text === '@' || tokens[j].text === '->') {
-                  break;
-                } else if (tokens[j].text === '_' || isNext(token => token.text === ':', true, j, tokens, false, false)) {
-                  break;
-                } else if (tokens[j].text === '/') {
-                  isAtSeparator = true;
-                } else if (tokens[j].text === 'ref' || tokens[j].text === 'params' || tokens[j].text === 'in' || tokens[j].text === 'out') {
-                  break;
+                  changeKind(tokens[j], 'name.other');
+                  tokens[j].text = modifier + tokens[j].text;
+                  genericsParams.push(tokens[j]);
+                  isAtSeparator = false;
+                  genericsParamsEndIndex = j;
                 } else {
-                  throw new SyntaxError(tokens[j]);
-                }
-              }
-            }
-            if (genericsParams.length === 0) {
-              throw new SyntaxError(tokens[genericsParamsAnnotationIndex.index], 'Missing generics parameter');
-            }
-            decorations[decorations.length - 1].end = tokens[genericsParamsEndIndex].end;
-          }
-          if (tokens[genericsParamsEndIndex + 1].category !== 'space' && tokens[genericsParamsEndIndex + 1].category !== 'line_break' && tokens[genericsParamsEndIndex + 1].category !== 'comment' && tokens[genericsParamsEndIndex + 1].text !== '{') {
-            throw new SyntaxError(tokens[genericsParamsEndIndex + 1]);
-          }
-
-          let args: Variable[] | null = null;
-          if (tokens.slice(genericsParamsEndIndex + 1, inheritanceIndex === -1 ? (atIndex === -1 ? leftBraceIndex : atIndex) : inheritanceIndex).some(x => x.category !== 'space' && x.category !== 'line_break' && x.category !== 'comment')) {
-            args = parseArgs(tokens.slice(genericsParamsEndIndex + 1, inheritanceIndex === -1 ? (atIndex === -1 ? leftBraceIndex : atIndex) : inheritanceIndex));
-          }
-
-          converted.push(`class ${tokens[classNameIndex].text}${genericsParams.length === 0 ? '' : `<${genericsParams.map(x => x.text).join(', ')}>`}${args === null ? '' : `(${args.map(x => `${x.modifier ? x.modifier + ' ' : ''}${convertType(x.type, true, false)} ${x.name}`).join(', ')})`}${inheritances.length === 0 ? '' : ` : ${inheritances.join(', ')}`} {\r\n`);
-
-          let rightBraceIndex = -1;
-          let braceCount = 1;
-          for (let j = leftBraceIndex + 1; j < tokens.length; j++) {
-            if (tokens[j].text == '{') {
-              braceCount++;
-            } else if (tokens[j].text == '}') {
-              braceCount--;
-              if (braceCount == 0) {
-                rightBraceIndex = j;
-                break;
-              }
-            }
-          }
-          if (rightBraceIndex == -1) {
-            throw new SyntaxError(tokens[leftBraceIndex], 'Missing right brace');
-          }
-          const block = tokens.slice(leftBraceIndex + 1, rightBraceIndex);
-          convertBlock(block, 'class', indentLevel + 1);
-
-          converted.push(`${' '.repeat(indentLevel * indentCount)}}\r\n`);
-
-          i = rightBraceIndex;
-          break;
-        }
-        case 'record': {
-          throw new SyntaxError(current, 'Not implemented');
-        }
-        case 'struct': {
-          if (container !== 'none' && container !== 'namespace') {
-            throw new SyntaxError(current, 'Cannot declare struct here');
-          }
-
-          let leftBraceIndex = -1;
-          for (let j = i + 1; j < tokens.length; j++) {
-            if (tokens[j].text === '{') {
-              leftBraceIndex = j;
-              break;
-            } else if (tokens[j].text === 'switch' || (tokens[j].text === '=>' && isNext(token => token.text === '{', true, j, tokens, false, false))) {
-              let braceCount = 0;
-              let rightBraceIndex = -1;
-              for (let k = j + 1; k < tokens.length; k++) {
-                if (tokens[k].text === '{')
-                  braceCount++;
-                else if (tokens[k].text === '}') {
-                  braceCount--;
-                  if (braceCount === 0) {
-                    rightBraceIndex = k;
+                  if (tokens[j].text === '@' || tokens[j].text === '->') {
                     break;
-                  }
-                }
-              }
-              if (rightBraceIndex === -1)
-                throw new SyntaxError(current, 'Missing right brace');
-              j = rightBraceIndex;
-            }
-          }
-          if (leftBraceIndex === -1) {
-            throw new SyntaxError(current, 'Missing left brace');
-          }
-
-          const atIndex = tokens.findIndex((s, j) => j > i && j < leftBraceIndex && s.text == '@');
-          if (atIndex != -1) {
-            const modifiers = searchModifiers(tokens.slice(atIndex + 1, leftBraceIndex));
-            converted.push(...modifiers.map(x => x.text + ' '));
-          }
-
-          if (modifiers.inheritance !== null)
-            throw new SyntaxError(modifiers.inheritance[1], `${modifiers.inheritance[1]} is not allowed for struct`);
-          if (modifiers.refImmut !== null) {
-            if (modifiers.refImmut[0] === 'ref')
-              converted.push('ref ');
-            else if (modifiers.refImmut[0] === 'immut')
-              converted.push('readonly ');
-            else if (modifiers.refImmut[0] === 'immut ref')
-              converted.push('readonly ref ');
-            else
-              throw new SyntaxError(modifiers.refImmut[1], `${modifiers.refImmut[0]} is not allowed for struct`);
-          }
-          if (modifiers.async)
-            throw new SyntaxError(modifiers.async[1], 'async is not allowed for struct');
-          if (modifiers.yield)
-            throw new SyntaxError(modifiers.yield[1], 'yield is not allowed for struct');
-          if (modifiers.partial)
-            converted.push('partial ');
-          resetModifiers();
-
-          const structName = isNext(() => true, true, i, tokens, false, true) as { result: boolean, index: number };
-          if (structName.result === false || structName.index === i + 1) {
-            throw new SyntaxError(tokens[structName.index]);
-          }
-          const structNameIndex = structName.index;
-          if (tokens[structNameIndex].category !== undefined && tokens[structNameIndex].category !== 'context_keyword') {
-            throw new SyntaxError(tokens[structNameIndex]);
-          }
-          changeKind(tokens[structNameIndex], 'name.struct', true);
-          if (tokens[structNameIndex].text === '_' || tokens[structNameIndex].text.startsWith(autoModifiedVarNamePrefix) || tokens[structNameIndex].text.startsWith('__'))
-            throw new SyntaxError(tokens[structNameIndex], 'Cannot use this struct name');
-
-          const inheritanceIndex = tokens.findIndex((s, j) => j > structNameIndex && j < leftBraceIndex && s.text == '->');
-          const inheritances: string[] = [];
-          if (inheritanceIndex !== -1) {
-            let currentInheritance = '';
-            let j = inheritanceIndex + 1;
-            while (j < (atIndex === -1 ? leftBraceIndex : atIndex)) {
-              const current = tokens[j];
-              if (current.category === 'space' || current.category === 'line_break' || current.category === 'comment') {
-                j++;
-                continue;
-              }
-              const nextIndex = isNext(() => true, true, j, tokens, false, true) as { result: boolean, index: number };
-              if (nextIndex.index === -1)
-                throw new SyntaxError(tokens[j]);
-              if (nextIndex.index >= (atIndex === -1 ? leftBraceIndex : atIndex)) {
-                if (currentInheritance !== '\0')
-                  inheritances.push(currentInheritance + current.text);
-                break;
-              }
-              const next = tokens[nextIndex.index];
-              if (next.text === '.') {
-                currentInheritance += current.text + '.';
-                j = nextIndex.index + 1;
-              } else if (next.text === ',') {
-                if (currentInheritance !== '\0') {
-                  currentInheritance += current.text;
-                  inheritances.push(currentInheritance);
-                }
-                currentInheritance = '';
-                j = nextIndex.index + 1;
-              } else if (next.text === '-') {
-                changeKind(tokens[j], 'name.other');
-                currentInheritance += current.text;
-                let genericsParamsEndIndex = j;
-                let isAtSeparator = true;
-                const genericsParams: BaseToken[] = [];
-                let isFirst = true;
-                for (let k = tokens.findIndex(x => x.tokenId === next.tokenId) + 1; k < (atIndex === -1 ? leftBraceIndex : atIndex); k++) {
-                  if (tokens[k].category === 'space' || tokens[k].category === 'line_break' || tokens[k].category === 'comment') {
-                    continue;
-                  }
-                  if (isFirst) {
-                    decorations.push({ start: tokens[k].start, end: -1, kind: 'generics' });
-                    isFirst = false;
-                  }
-                  if (isAtSeparator) {
-                    let modifier = '';
-                    if (tokens[k].text === 'in' || tokens[k].text === 'out') {
-                      modifier = tokens[k].text + ' ';
-                      const nextIndex = isNext(() => true, true, k, tokens, false, true) as { result: boolean, index: number };
-                      if (nextIndex.index === -1)
-                        throw new SyntaxError(tokens[k]);
-                      k = nextIndex.index;
-                    }
-                    changeKind(tokens[k], 'name.other');
-                    tokens[k].text = modifier + tokens[k].text;
-                    genericsParams.push(tokens[k]);
-                    isAtSeparator = false;
-                    genericsParamsEndIndex = k;
-                  } else {
-                    if (tokens[k].text === ',' || tokens[k].text === '@' || tokens[k].text === '{') {
-                      break;
-                    } else if (tokens[k].text === '/') {
-                      isAtSeparator = true;
-                    } else {
-                      throw new SyntaxError(tokens[k]);
-                    }
-                  }
-                }
-                if (genericsParams.length === 0) {
-                  throw new SyntaxError(next, 'Missing generics parameter');
-                }
-                decorations[decorations.length - 1].end = tokens[genericsParamsEndIndex].end;
-                j = genericsParamsEndIndex;
-                inheritances.push(`${currentInheritance}<${genericsParams.map(x => x.text).join(', ')}>`);
-                currentInheritance = '\0';
-              } else {
-                const previousKind = current.kind;
-                current.kind = 'name.fn';
-                const lengthBefore = converted.length;
-                const rightSide = convertRightSide(tokens.slice(j, (atIndex === -1 ? leftBraceIndex : atIndex)), -1, null, true, indentLevel);
-                if (converted[converted.length - 1] === ';\r\n') {
-                  converted.pop();
-                }
-                current.kind = previousKind;
-                changeKind(current, 'name.other');
-                inheritances.push(currentInheritance + converted.slice(lengthBefore).join(''));
-                converted.splice(lengthBefore);
-                currentInheritance = '';
-                j += rightSide.endAt;
-                for (let k = j; k < (atIndex === -1 ? leftBraceIndex : atIndex); k++) {
-                  if (tokens[k].text === ';') {
-                    j = k + 1;
-                  } else {
+                  } else if (tokens[j].text === '_' || isNext(token => token.text === ':', true, j, tokens, false, false)) {
                     break;
+                  } else if (tokens[j].text === '/') {
+                    isAtSeparator = true;
+                  } else if (tokens[j].text === 'ref' || tokens[j].text === 'params' || tokens[j].text === 'in' || tokens[j].text === 'out') {
+                    break;
+                  } else {
+                    throw new SyntaxError(tokens[j]);
                   }
                 }
-                if (tokens[j].text === ',') {
-                  j++;
-                }
               }
+              if (genericsParams.length === 0) {
+                throw new SyntaxError(tokens[genericsParamsAnnotationIndex.index], 'Missing generics parameter');
+              }
+              decorations[decorations.length - 1].end = tokens[genericsParamsEndIndex].end;
+            }
+            if (tokens[genericsParamsEndIndex + 1].category !== 'space' && tokens[genericsParamsEndIndex + 1].category !== 'line_break' && tokens[genericsParamsEndIndex + 1].category !== 'comment' && tokens[genericsParamsEndIndex + 1].text !== '{') {
+              throw new SyntaxError(tokens[genericsParamsEndIndex + 1]);
             }
 
-            if (inheritances.length === 0)
-              throw new SyntaxError(tokens[inheritanceIndex], 'Missing inheritance');
-          }
+            let args: Variable[] | null = null;
+            if (tokens.slice(genericsParamsEndIndex + 1, inheritanceIndex === -1 ? (atIndex === -1 ? leftBraceIndex : atIndex) : inheritanceIndex).some(x => x.category !== 'space' && x.category !== 'line_break' && x.category !== 'comment')) {
+              args = parseArgs(tokens.slice(genericsParamsEndIndex + 1, inheritanceIndex === -1 ? (atIndex === -1 ? leftBraceIndex : atIndex) : inheritanceIndex));
+            }
 
-          let genericsParamsEndIndex = structNameIndex;
-          const genericsParams: BaseToken[] = [];
-          const genericsParamsAnnotationIndex = isNext(token => token.text === '-', true, structNameIndex, tokens, false, true) as { result: boolean, index: number };
-          if (genericsParamsAnnotationIndex.result) {
-            genericsParamsEndIndex = genericsParamsAnnotationIndex.index;
-            let isAtSeparator = true;
-            let isFirst = true;
-            for (let j = genericsParamsAnnotationIndex.index + 1; j < leftBraceIndex; j++) {
-              if (tokens[j].category === 'space' || tokens[j].category === 'line_break' || tokens[j].category === 'comment') {
-                continue;
-              }
-              if (isFirst) {
-                decorations.push({ start: tokens[j].start, end: -1, kind: 'generics' });
-              }
-              if (isAtSeparator) {
-                let modifier = '';
-                if (tokens[j].text === 'in' || tokens[j].text === 'out') {
-                  modifier = tokens[j].text + ' ';
-                  const nextIndex = isNext(() => true, true, j, tokens, false, true) as { result: boolean, index: number };
-                  if (nextIndex.index === -1)
-                    throw new SyntaxError(tokens[j]);
-                  j = nextIndex.index;
-                }
-                changeKind(tokens[j], 'name.other');
-                tokens[j].text = modifier + tokens[j].text;
-                genericsParams.push(tokens[j]);
-                isAtSeparator = false;
-                genericsParamsEndIndex = j;
-              } else {
-                if (tokens[j].text === '@') {
+            converted.push(`class ${tokens[classNameIndex].text}${genericsParams.length === 0 ? '' : `<${genericsParams.map(x => x.text).join(', ')}>`}${args === null ? '' : `(${args.map(x => `${x.modifier ? x.modifier + ' ' : ''}${convertType(x.type, true, false)} ${x.name}`).join(', ')})`}${inheritances.length === 0 ? '' : ` : ${inheritances.join(', ')}`} {\r\n`);
+
+            let rightBraceIndex = -1;
+            let braceCount = 1;
+            for (let j = leftBraceIndex + 1; j < tokens.length; j++) {
+              if (tokens[j].text == '{') {
+                braceCount++;
+              } else if (tokens[j].text == '}') {
+                braceCount--;
+                if (braceCount == 0) {
+                  rightBraceIndex = j;
                   break;
-                } else if (tokens[j].text === '/') {
-                  isAtSeparator = true;
-                } else {
-                  throw new SyntaxError(tokens[j]);
                 }
               }
             }
-            if (genericsParams.length === 0) {
-              throw new SyntaxError(tokens[genericsParamsAnnotationIndex.index], 'Missing generics parameter');
+            if (rightBraceIndex == -1) {
+              throw new SyntaxError(tokens[leftBraceIndex], 'Missing right brace');
             }
-            decorations[decorations.length - 1].end = tokens[genericsParamsEndIndex].end;
-          }
-          if (tokens[genericsParamsEndIndex + 1].category !== 'space' && tokens[genericsParamsEndIndex + 1].category !== 'line_break' && tokens[genericsParamsEndIndex + 1].category !== 'comment' && tokens[genericsParamsEndIndex + 1].text !== '{') {
-            throw new SyntaxError(tokens[genericsParamsEndIndex + 1]);
-          }
+            const block = tokens.slice(leftBraceIndex + 1, rightBraceIndex);
+            convertBlock(block, 'class', indentLevel + 1);
 
-          let args: Variable[] | null = null;
-          if (tokens.slice(genericsParamsEndIndex + 1, inheritanceIndex === -1 ? (atIndex === -1 ? leftBraceIndex : atIndex) : inheritanceIndex).some(x => x.category !== 'space' && x.category !== 'line_break' && x.category !== 'comment')) {
-            args = parseArgs(tokens.slice(genericsParamsEndIndex + 1, inheritanceIndex === -1 ? (atIndex === -1 ? leftBraceIndex : atIndex) : inheritanceIndex));
-          }
+            converted.push(`${' '.repeat(indentLevel * indentCount)}}\r\n`);
 
-          converted.push(`struct ${tokens[structNameIndex].text}${genericsParams.length === 0 ? '' : `<${genericsParams.map(x => x.text).join(', ')}>`}${args === null ? '' : `(${args.map(x => `${x.modifier ? x.modifier + ' ' : ''}${convertType(x.type, true, false)} ${x.name}`).join(', ')})`}${inheritances.length === 0 ? '' : ` : ${inheritances.join(', ')}`} {\r\n`);
-
-          let rightBraceIndex = -1;
-          let braceCount = 1;
-          for (let j = leftBraceIndex + 1; j < tokens.length; j++) {
-            if (tokens[j].text == '{') {
-              braceCount++;
-            } else if (tokens[j].text == '}') {
-              braceCount--;
-              if (braceCount == 0) {
-                rightBraceIndex = j;
-                break;
-              }
-            }
-          }
-          if (rightBraceIndex == -1) {
-            throw new SyntaxError(tokens[leftBraceIndex], 'Missing right brace');
-          }
-          const block = tokens.slice(leftBraceIndex + 1, rightBraceIndex);
-          convertBlock(block, 'struct', indentLevel + 1);
-
-          converted.push(`${' '.repeat(indentLevel * indentCount)}}\r\n`);
-
-          i = rightBraceIndex;
-          break;
-        }
-        case 'fn': {
-          let isPartial = false;
-          let leftBraceIndex = tokens.findIndex((s, j) => j > i && s.text == '{');
-          const semicolonIndex = tokens.findIndex((s, j) => j > i && s.text == ';');
-          if (semicolonIndex !== -1 && (leftBraceIndex === -1 || semicolonIndex < leftBraceIndex)) {
-            isPartial = true;
-            leftBraceIndex = semicolonIndex;
-          }
-          if (leftBraceIndex == -1) {
-            throw new SyntaxError(current, 'Missing left brace');
-          }
-          const atIndex = tokens.findIndex((s, j) => j > i && j < leftBraceIndex && s.text == '@');
-          if (atIndex != -1) {
-            if (container !== 'class' && container !== 'struct')
-              throw new SyntaxError(tokens[atIndex], 'Accessibility modifier is not allowed here');
-            const modifiers = searchModifiers(tokens.slice(atIndex + 1, leftBraceIndex));
-            tokens.slice(atIndex + 1, leftBraceIndex).forEach(s => s.kind = 'modifier.after-at');
-            converted.push(...modifiers.map(x => x.text + ' '));
-          }
-
-          if (modifiers.inheritance !== null)
-            throw new SyntaxError(modifiers.inheritance[1], `${modifiers.inheritance[0]} is not allowed for function`);
-          if (modifiers.refImmut !== null)
-            throw new SyntaxError(modifiers.refImmut[1], `${modifiers.refImmut[0]} is not allowed for function`);
-          if (modifiers.async)
-            converted.push('async ');
-          if (modifiers.partial)
-            converted.push('partial ');
-          else if (isPartial)
-            throw new SyntaxError(current, 'Missing left brace');
-
-          const fnName = isNext(() => true, true, i, tokens, false, true) as { result: boolean, index: number };
-          if (fnName.result === false || fnName.index === i + 1) {
-            throw new SyntaxError(tokens[fnName.index]);
-          }
-          const fnNameIndex = fnName.index;
-          if (tokens[fnNameIndex].category !== undefined && tokens[fnNameIndex].category !== 'context_keyword') {
-            throw new SyntaxError(tokens[fnNameIndex]);
-          }
-          changeKind(tokens[fnNameIndex], 'name.fn', true);
-          if (tokens[fnNameIndex].text === '_' || tokens[fnNameIndex].text.startsWith(autoModifiedVarNamePrefix) || tokens[fnNameIndex].text.startsWith('__'))
-            throw new SyntaxError(tokens[fnNameIndex], 'Cannot use this function name');
-
-          let genericsParamsEndIndex = fnNameIndex;
-          const genericsParams: BaseToken[] = [];
-          const genericsParamsAnnotationIndex = isNext(token => token.text === '-', true, fnNameIndex, tokens, false, true) as { result: boolean, index: number };
-          if (genericsParamsAnnotationIndex.result) {
-            genericsParamsEndIndex = genericsParamsAnnotationIndex.index;
-            let isAtSeparator = true;
-            let isFirst = true;
-            for (let j = genericsParamsAnnotationIndex.index + 1; j < leftBraceIndex; j++) {
-              if (tokens[j].category === 'space' || tokens[j].category === 'line_break' || tokens[j].category === 'comment') {
-                continue;
-              }
-              if (isFirst) {
-                decorations.push({ start: tokens[j].start, end: -1, kind: 'generics' });
-                isFirst = false;
-              }
-              if (isAtSeparator) {
-                let modifier = '';
-                if (tokens[j].text === 'in' || tokens[j].text === 'out') {
-                  modifier = tokens[j].text + ' ';
-                  const nextIndex = isNext(() => true, true, j, tokens, false, true) as { result: boolean, index: number };
-                  if (nextIndex.index === -1)
-                    throw new SyntaxError(tokens[j]);
-                  j = nextIndex.index;
-                }
-                changeKind(tokens[j], 'name.other');
-                tokens[j].text = modifier + tokens[j].text;
-                genericsParams.push(tokens[j]);
-                isAtSeparator = false;
-                genericsParamsEndIndex = j;
-              } else {
-                if (tokens[j].text === '@') {
-                  break;
-                } else if (tokens[j].text === '_' || isNext(token => token.text === ':', true, j, tokens, false, false)) {
-                  break;
-                } else if (tokens[j].text === '/') {
-                  isAtSeparator = true;
-                } else if (tokens[j].text === 'ref' || tokens[j].text === 'params' || tokens[j].text === 'in' || tokens[j].text === 'out') {
-                  break;
-                } else {
-                  throw new SyntaxError(tokens[j]);
-                }
-              }
-            }
-            if (genericsParams.length === 0) {
-              throw new SyntaxError(tokens[genericsParamsAnnotationIndex.index], 'Missing generics parameter');
-            }
-            decorations[decorations.length - 1].end = tokens[genericsParamsEndIndex].end;
-          }
-          if (tokens[genericsParamsEndIndex + 1].category !== 'space' && tokens[genericsParamsEndIndex + 1].category !== 'line_break' && tokens[genericsParamsEndIndex + 1].category !== 'comment' && ((tokens[genericsParamsEndIndex + 1].text !== '{' && isPartial === false) || (tokens[genericsParamsEndIndex + 1].text !== ';' && isPartial === true))) {
-            throw new SyntaxError(tokens[genericsParamsEndIndex + 1]);
-          }
-
-          if (tokens.slice(genericsParamsEndIndex + 1, atIndex === -1 ? leftBraceIndex : atIndex).some(s => s.category !== 'space' && s.category !== 'line_break' && s.category !== 'comment')) {
-            const argsAndReturned = parseArgsAndReturned(tokens.slice(genericsParamsEndIndex + 1, atIndex === -1 ? leftBraceIndex : atIndex));
-            const args = argsAndReturned.args.map(x => {
-              return `${x.modifier ? x.modifier + ' ' : ''}${convertType(x.type, true, false)} ${x.name}`;
-            }).join(', ');
-            const returned = convertType(argsAndReturned.returned, false, true);
-
-            if (genericsParams.length === 0)
-              converted.push(`${returned} ${tokens[fnNameIndex].text}(${args})`);
-            else
-              converted.push(`${returned} ${tokens[fnNameIndex].text}<${genericsParams.map(x => x.text).join(', ')}>(${args})`);
-          } else {
-            if (genericsParams.length === 0)
-              converted.push(`void ${tokens[fnNameIndex].text}()`);
-            else
-              converted.push(`void ${tokens[fnNameIndex].text}<${genericsParams.map(x => x.text).join(', ')}>()`);
-          }
-
-          if (isPartial) {
-            converted.push(';\r\n');
-            i = leftBraceIndex + 1;
+            i = rightBraceIndex;
             break;
-          } else {
-            converted.push(' {\r\n');
           }
+          case 'record': {
+            throw new SyntaxError(current, 'Not implemented');
+          }
+          case 'struct': {
+            if (container !== 'none' && container !== 'namespace') {
+              throw new SyntaxError(current, 'Cannot declare struct here');
+            }
 
-          let rightBraceIndex = -1;
-          let braceCount = 1;
-          for (let j = leftBraceIndex + 1; j < tokens.length; j++) {
-            if (tokens[j].text == '{') {
-              braceCount++;
-            } else if (tokens[j].text == '}') {
-              braceCount--;
-              if (braceCount == 0) {
-                rightBraceIndex = j;
+            let leftBraceIndex = -1;
+            for (let j = i + 1; j < tokens.length; j++) {
+              if (tokens[j].text === '{') {
+                leftBraceIndex = j;
                 break;
+              } else if (tokens[j].text === 'switch' || (tokens[j].text === '=>' && isNext(token => token.text === '{', true, j, tokens, false, false))) {
+                let braceCount = 0;
+                let rightBraceIndex = -1;
+                for (let k = j + 1; k < tokens.length; k++) {
+                  if (tokens[k].text === '{')
+                    braceCount++;
+                  else if (tokens[k].text === '}') {
+                    braceCount--;
+                    if (braceCount === 0) {
+                      rightBraceIndex = k;
+                      break;
+                    }
+                  }
+                }
+                if (rightBraceIndex === -1)
+                  throw new SyntaxError(current, 'Missing right brace');
+                j = rightBraceIndex;
               }
             }
+            if (leftBraceIndex === -1) {
+              throw new SyntaxError(current, 'Missing left brace');
+            }
+
+            const atIndex = tokens.findIndex((s, j) => j > i && j < leftBraceIndex && s.text == '@');
+            if (atIndex != -1) {
+              const modifiers = searchModifiers(tokens.slice(atIndex + 1, leftBraceIndex));
+              converted.push(...modifiers.map(x => x.text + ' '));
+            }
+
+            if (modifiers.inheritance !== null)
+              throw new SyntaxError(modifiers.inheritance[1], `${modifiers.inheritance[1]} is not allowed for struct`);
+            if (modifiers.refImmut !== null) {
+              if (modifiers.refImmut[0] === 'ref')
+                converted.push('ref ');
+              else if (modifiers.refImmut[0] === 'immut')
+                converted.push('readonly ');
+              else if (modifiers.refImmut[0] === 'immut ref')
+                converted.push('readonly ref ');
+              else
+                throw new SyntaxError(modifiers.refImmut[1], `${modifiers.refImmut[0]} is not allowed for struct`);
+            }
+            if (modifiers.async)
+              throw new SyntaxError(modifiers.async[1], 'async is not allowed for struct');
+            if (modifiers.yield)
+              throw new SyntaxError(modifiers.yield[1], 'yield is not allowed for struct');
+            if (modifiers.partial)
+              converted.push('partial ');
+            resetModifiers();
+
+            const structName = isNext(() => true, true, i, tokens, false, true) as { result: boolean, index: number };
+            if (structName.result === false || structName.index === i + 1) {
+              throw new SyntaxError(tokens[structName.index]);
+            }
+            const structNameIndex = structName.index;
+            if (tokens[structNameIndex].category !== undefined && tokens[structNameIndex].category !== 'context_keyword') {
+              throw new SyntaxError(tokens[structNameIndex]);
+            }
+            changeKind(tokens[structNameIndex], 'name.struct', true);
+            if (tokens[structNameIndex].text === '_' || tokens[structNameIndex].text.startsWith(autoModifiedVarNamePrefix) || tokens[structNameIndex].text.startsWith('__'))
+              throw new SyntaxError(tokens[structNameIndex], 'Cannot use this struct name');
+
+            const inheritanceIndex = tokens.findIndex((s, j) => j > structNameIndex && j < leftBraceIndex && s.text == '->');
+            const inheritances: string[] = [];
+            if (inheritanceIndex !== -1) {
+              let currentInheritance = '';
+              let j = inheritanceIndex + 1;
+              while (j < (atIndex === -1 ? leftBraceIndex : atIndex)) {
+                const current = tokens[j];
+                if (current.category === 'space' || current.category === 'line_break' || current.category === 'comment') {
+                  j++;
+                  continue;
+                }
+                const nextIndex = isNext(() => true, true, j, tokens, false, true) as { result: boolean, index: number };
+                if (nextIndex.index === -1)
+                  throw new SyntaxError(tokens[j]);
+                if (nextIndex.index >= (atIndex === -1 ? leftBraceIndex : atIndex)) {
+                  if (currentInheritance !== '\0')
+                    inheritances.push(currentInheritance + current.text);
+                  break;
+                }
+                const next = tokens[nextIndex.index];
+                if (next.text === '.') {
+                  currentInheritance += current.text + '.';
+                  j = nextIndex.index + 1;
+                } else if (next.text === ',') {
+                  if (currentInheritance !== '\0') {
+                    currentInheritance += current.text;
+                    inheritances.push(currentInheritance);
+                  }
+                  currentInheritance = '';
+                  j = nextIndex.index + 1;
+                } else if (next.text === '-') {
+                  changeKind(tokens[j], 'name.other');
+                  currentInheritance += current.text;
+                  let genericsParamsEndIndex = j;
+                  let isAtSeparator = true;
+                  const genericsParams: BaseToken[] = [];
+                  let isFirst = true;
+                  for (let k = tokens.findIndex(x => x.tokenId === next.tokenId) + 1; k < (atIndex === -1 ? leftBraceIndex : atIndex); k++) {
+                    if (tokens[k].category === 'space' || tokens[k].category === 'line_break' || tokens[k].category === 'comment') {
+                      continue;
+                    }
+                    if (isFirst) {
+                      decorations.push({ start: tokens[k].start, end: -1, kind: 'generics' });
+                      isFirst = false;
+                    }
+                    if (isAtSeparator) {
+                      let modifier = '';
+                      if (tokens[k].text === 'in' || tokens[k].text === 'out') {
+                        modifier = tokens[k].text + ' ';
+                        const nextIndex = isNext(() => true, true, k, tokens, false, true) as { result: boolean, index: number };
+                        if (nextIndex.index === -1)
+                          throw new SyntaxError(tokens[k]);
+                        k = nextIndex.index;
+                      }
+                      changeKind(tokens[k], 'name.other');
+                      tokens[k].text = modifier + tokens[k].text;
+                      genericsParams.push(tokens[k]);
+                      isAtSeparator = false;
+                      genericsParamsEndIndex = k;
+                    } else {
+                      if (tokens[k].text === ',' || tokens[k].text === '@' || tokens[k].text === '{') {
+                        break;
+                      } else if (tokens[k].text === '/') {
+                        isAtSeparator = true;
+                      } else {
+                        throw new SyntaxError(tokens[k]);
+                      }
+                    }
+                  }
+                  if (genericsParams.length === 0) {
+                    throw new SyntaxError(next, 'Missing generics parameter');
+                  }
+                  decorations[decorations.length - 1].end = tokens[genericsParamsEndIndex].end;
+                  j = genericsParamsEndIndex;
+                  inheritances.push(`${currentInheritance}<${genericsParams.map(x => x.text).join(', ')}>`);
+                  currentInheritance = '\0';
+                } else {
+                  const previousKind = current.kind;
+                  current.kind = 'name.fn';
+                  const lengthBefore = converted.length;
+                  const rightSide = convertRightSide(tokens.slice(j, (atIndex === -1 ? leftBraceIndex : atIndex)), -1, null, true, indentLevel);
+                  if (converted[converted.length - 1] === ';\r\n') {
+                    converted.pop();
+                  }
+                  current.kind = previousKind;
+                  changeKind(current, 'name.other');
+                  inheritances.push(currentInheritance + converted.slice(lengthBefore).join(''));
+                  converted.splice(lengthBefore);
+                  currentInheritance = '';
+                  j += rightSide.endAt;
+                  for (let k = j; k < (atIndex === -1 ? leftBraceIndex : atIndex); k++) {
+                    if (tokens[k].text === ';') {
+                      j = k + 1;
+                    } else {
+                      break;
+                    }
+                  }
+                  if (tokens[j].text === ',') {
+                    j++;
+                  }
+                }
+              }
+
+              if (inheritances.length === 0)
+                throw new SyntaxError(tokens[inheritanceIndex], 'Missing inheritance');
+            }
+
+            let genericsParamsEndIndex = structNameIndex;
+            const genericsParams: BaseToken[] = [];
+            const genericsParamsAnnotationIndex = isNext(token => token.text === '-', true, structNameIndex, tokens, false, true) as { result: boolean, index: number };
+            if (genericsParamsAnnotationIndex.result) {
+              genericsParamsEndIndex = genericsParamsAnnotationIndex.index;
+              let isAtSeparator = true;
+              let isFirst = true;
+              for (let j = genericsParamsAnnotationIndex.index + 1; j < leftBraceIndex; j++) {
+                if (tokens[j].category === 'space' || tokens[j].category === 'line_break' || tokens[j].category === 'comment') {
+                  continue;
+                }
+                if (isFirst) {
+                  decorations.push({ start: tokens[j].start, end: -1, kind: 'generics' });
+                }
+                if (isAtSeparator) {
+                  let modifier = '';
+                  if (tokens[j].text === 'in' || tokens[j].text === 'out') {
+                    modifier = tokens[j].text + ' ';
+                    const nextIndex = isNext(() => true, true, j, tokens, false, true) as { result: boolean, index: number };
+                    if (nextIndex.index === -1)
+                      throw new SyntaxError(tokens[j]);
+                    j = nextIndex.index;
+                  }
+                  changeKind(tokens[j], 'name.other');
+                  tokens[j].text = modifier + tokens[j].text;
+                  genericsParams.push(tokens[j]);
+                  isAtSeparator = false;
+                  genericsParamsEndIndex = j;
+                } else {
+                  if (tokens[j].text === '@') {
+                    break;
+                  } else if (tokens[j].text === '/') {
+                    isAtSeparator = true;
+                  } else {
+                    throw new SyntaxError(tokens[j]);
+                  }
+                }
+              }
+              if (genericsParams.length === 0) {
+                throw new SyntaxError(tokens[genericsParamsAnnotationIndex.index], 'Missing generics parameter');
+              }
+              decorations[decorations.length - 1].end = tokens[genericsParamsEndIndex].end;
+            }
+            if (tokens[genericsParamsEndIndex + 1].category !== 'space' && tokens[genericsParamsEndIndex + 1].category !== 'line_break' && tokens[genericsParamsEndIndex + 1].category !== 'comment' && tokens[genericsParamsEndIndex + 1].text !== '{') {
+              throw new SyntaxError(tokens[genericsParamsEndIndex + 1]);
+            }
+
+            let args: Variable[] | null = null;
+            if (tokens.slice(genericsParamsEndIndex + 1, inheritanceIndex === -1 ? (atIndex === -1 ? leftBraceIndex : atIndex) : inheritanceIndex).some(x => x.category !== 'space' && x.category !== 'line_break' && x.category !== 'comment')) {
+              args = parseArgs(tokens.slice(genericsParamsEndIndex + 1, inheritanceIndex === -1 ? (atIndex === -1 ? leftBraceIndex : atIndex) : inheritanceIndex));
+            }
+
+            converted.push(`struct ${tokens[structNameIndex].text}${genericsParams.length === 0 ? '' : `<${genericsParams.map(x => x.text).join(', ')}>`}${args === null ? '' : `(${args.map(x => `${x.modifier ? x.modifier + ' ' : ''}${convertType(x.type, true, false)} ${x.name}`).join(', ')})`}${inheritances.length === 0 ? '' : ` : ${inheritances.join(', ')}`} {\r\n`);
+
+            let rightBraceIndex = -1;
+            let braceCount = 1;
+            for (let j = leftBraceIndex + 1; j < tokens.length; j++) {
+              if (tokens[j].text == '{') {
+                braceCount++;
+              } else if (tokens[j].text == '}') {
+                braceCount--;
+                if (braceCount == 0) {
+                  rightBraceIndex = j;
+                  break;
+                }
+              }
+            }
+            if (rightBraceIndex == -1) {
+              throw new SyntaxError(tokens[leftBraceIndex], 'Missing right brace');
+            }
+            const block = tokens.slice(leftBraceIndex + 1, rightBraceIndex);
+            convertBlock(block, 'struct', indentLevel + 1);
+
+            converted.push(`${' '.repeat(indentLevel * indentCount)}}\r\n`);
+
+            i = rightBraceIndex;
+            break;
           }
-          if (rightBraceIndex == -1) {
-            throw new SyntaxError(tokens[leftBraceIndex], 'Missing right brace');
+          case 'fn': {
+            let isPartial = false;
+            let leftBraceIndex = tokens.findIndex((s, j) => j > i && s.text == '{');
+            const semicolonIndex = tokens.findIndex((s, j) => j > i && s.text == ';');
+            if (semicolonIndex !== -1 && (leftBraceIndex === -1 || semicolonIndex < leftBraceIndex)) {
+              isPartial = true;
+              leftBraceIndex = semicolonIndex;
+            }
+            if (leftBraceIndex == -1) {
+              throw new SyntaxError(current, 'Missing left brace');
+            }
+            const atIndex = tokens.findIndex((s, j) => j > i && j < leftBraceIndex && s.text == '@');
+            if (atIndex != -1) {
+              if (container !== 'class' && container !== 'struct')
+                throw new SyntaxError(tokens[atIndex], 'Accessibility modifier is not allowed here');
+              const modifiers = searchModifiers(tokens.slice(atIndex + 1, leftBraceIndex));
+              tokens.slice(atIndex + 1, leftBraceIndex).forEach(s => s.kind = 'modifier.after-at');
+              converted.push(...modifiers.map(x => x.text + ' '));
+            }
+
+            if (modifiers.inheritance !== null)
+              throw new SyntaxError(modifiers.inheritance[1], `${modifiers.inheritance[0]} is not allowed for function`);
+            if (modifiers.refImmut !== null)
+              throw new SyntaxError(modifiers.refImmut[1], `${modifiers.refImmut[0]} is not allowed for function`);
+            if (modifiers.async)
+              converted.push('async ');
+            if (modifiers.partial)
+              converted.push('partial ');
+            else if (isPartial)
+              throw new SyntaxError(current, 'Missing left brace');
+
+            const fnName = isNext(() => true, true, i, tokens, false, true) as { result: boolean, index: number };
+            if (fnName.result === false || fnName.index === i + 1) {
+              throw new SyntaxError(tokens[fnName.index]);
+            }
+            const fnNameIndex = fnName.index;
+            if (tokens[fnNameIndex].category !== undefined && tokens[fnNameIndex].category !== 'context_keyword') {
+              throw new SyntaxError(tokens[fnNameIndex]);
+            }
+            changeKind(tokens[fnNameIndex], 'name.fn', true);
+            if (tokens[fnNameIndex].text === '_' || tokens[fnNameIndex].text.startsWith(autoModifiedVarNamePrefix) || tokens[fnNameIndex].text.startsWith('__'))
+              throw new SyntaxError(tokens[fnNameIndex], 'Cannot use this function name');
+
+            let genericsParamsEndIndex = fnNameIndex;
+            const genericsParams: BaseToken[] = [];
+            const genericsParamsAnnotationIndex = isNext(token => token.text === '-', true, fnNameIndex, tokens, false, true) as { result: boolean, index: number };
+            if (genericsParamsAnnotationIndex.result) {
+              genericsParamsEndIndex = genericsParamsAnnotationIndex.index;
+              let isAtSeparator = true;
+              let isFirst = true;
+              for (let j = genericsParamsAnnotationIndex.index + 1; j < leftBraceIndex; j++) {
+                if (tokens[j].category === 'space' || tokens[j].category === 'line_break' || tokens[j].category === 'comment') {
+                  continue;
+                }
+                if (isFirst) {
+                  decorations.push({ start: tokens[j].start, end: -1, kind: 'generics' });
+                  isFirst = false;
+                }
+                if (isAtSeparator) {
+                  let modifier = '';
+                  if (tokens[j].text === 'in' || tokens[j].text === 'out') {
+                    modifier = tokens[j].text + ' ';
+                    const nextIndex = isNext(() => true, true, j, tokens, false, true) as { result: boolean, index: number };
+                    if (nextIndex.index === -1)
+                      throw new SyntaxError(tokens[j]);
+                    j = nextIndex.index;
+                  }
+                  changeKind(tokens[j], 'name.other');
+                  tokens[j].text = modifier + tokens[j].text;
+                  genericsParams.push(tokens[j]);
+                  isAtSeparator = false;
+                  genericsParamsEndIndex = j;
+                } else {
+                  if (tokens[j].text === '@') {
+                    break;
+                  } else if (tokens[j].text === '_' || isNext(token => token.text === ':', true, j, tokens, false, false)) {
+                    break;
+                  } else if (tokens[j].text === '/') {
+                    isAtSeparator = true;
+                  } else if (tokens[j].text === 'ref' || tokens[j].text === 'params' || tokens[j].text === 'in' || tokens[j].text === 'out') {
+                    break;
+                  } else {
+                    throw new SyntaxError(tokens[j]);
+                  }
+                }
+              }
+              if (genericsParams.length === 0) {
+                throw new SyntaxError(tokens[genericsParamsAnnotationIndex.index], 'Missing generics parameter');
+              }
+              decorations[decorations.length - 1].end = tokens[genericsParamsEndIndex].end;
+            }
+            if (tokens[genericsParamsEndIndex + 1].category !== 'space' && tokens[genericsParamsEndIndex + 1].category !== 'line_break' && tokens[genericsParamsEndIndex + 1].category !== 'comment' && ((tokens[genericsParamsEndIndex + 1].text !== '{' && isPartial === false) || (tokens[genericsParamsEndIndex + 1].text !== ';' && isPartial === true))) {
+              throw new SyntaxError(tokens[genericsParamsEndIndex + 1]);
+            }
+
+            if (tokens.slice(genericsParamsEndIndex + 1, atIndex === -1 ? leftBraceIndex : atIndex).some(s => s.category !== 'space' && s.category !== 'line_break' && s.category !== 'comment')) {
+              const argsAndReturned = parseArgsAndReturned(tokens.slice(genericsParamsEndIndex + 1, atIndex === -1 ? leftBraceIndex : atIndex));
+              const args = argsAndReturned.args.map(x => {
+                return `${x.modifier ? x.modifier + ' ' : ''}${convertType(x.type, true, false)} ${x.name}`;
+              }).join(', ');
+              const returned = convertType(argsAndReturned.returned, false, true);
+
+              if (genericsParams.length === 0)
+                converted.push(`${returned} ${tokens[fnNameIndex].text}(${args})`);
+              else
+                converted.push(`${returned} ${tokens[fnNameIndex].text}<${genericsParams.map(x => x.text).join(', ')}>(${args})`);
+            } else {
+              if (genericsParams.length === 0)
+                converted.push(`void ${tokens[fnNameIndex].text}()`);
+              else
+                converted.push(`void ${tokens[fnNameIndex].text}<${genericsParams.map(x => x.text).join(', ')}>()`);
+            }
+
+            if (isPartial) {
+              converted.push(';\r\n');
+              i = leftBraceIndex + 1;
+              break;
+            } else {
+              converted.push(' {\r\n');
+            }
+
+            let rightBraceIndex = -1;
+            let braceCount = 1;
+            for (let j = leftBraceIndex + 1; j < tokens.length; j++) {
+              if (tokens[j].text == '{') {
+                braceCount++;
+              } else if (tokens[j].text == '}') {
+                braceCount--;
+                if (braceCount == 0) {
+                  rightBraceIndex = j;
+                  break;
+                }
+              }
+            }
+            if (rightBraceIndex == -1) {
+              throw new SyntaxError(tokens[leftBraceIndex], 'Missing right brace');
+            }
+            const block = tokens.slice(leftBraceIndex + 1, rightBraceIndex);
+            convertBlock(block, 'fn', indentLevel + 1, false, modifiers.yield !== null);
+
+            converted.push(`${' '.repeat(indentLevel * indentCount)}}\r\n`);
+
+            resetModifiers();
+
+            i = rightBraceIndex;
+            break;
           }
-          const block = tokens.slice(leftBraceIndex + 1, rightBraceIndex);
-          convertBlock(block, 'fn', indentLevel + 1, false, modifiers.yield !== null);
+          case 'let':
+          case 'const':
+          case '--immut':
+          case '--ref':
+          case '--immut-ref':
+          case '--ref-immut':
+          case '--immut-ref-immut': {
+            if (container !== 'class' && container !== 'struct' && container !== 'fn') {
+              throw new SyntaxError(current, 'Cannot declare variable here');
+            }
 
-          converted.push(`${' '.repeat(indentLevel * indentCount)}}\r\n`);
+            const firstConvertedLength = converted.length;
 
-          resetModifiers();
-
-          i = rightBraceIndex;
-          break;
-        }
-        case 'let':
-        case 'const':
-        case '--immut':
-        case '--ref':
-        case '--immut-ref':
-        case '--ref-immut':
-        case '--immut-ref-immut': {
-          if (container !== 'class' && container !== 'struct' && container !== 'fn') {
-            throw new SyntaxError(current, 'Cannot declare variable here');
-          }
-
-          const firstConvertedLength = converted.length;
-
-          if (current.text.startsWith('--')) {
-            const nextIndex = isNext(() => true, true, i, tokens, false, true) as { result: boolean, index: number };
-            if (nextIndex.index === -1 || nextIndex.index === i + 1)
+            if (current.text.startsWith('--')) {
+              const nextIndex = isNext(() => true, true, i, tokens, false, true) as { result: boolean, index: number };
+              if (nextIndex.index === -1 || nextIndex.index === i + 1)
+                throw new SyntaxError(current, 'Missing variable name');
+              if (tokens[nextIndex.index].text === 'let')
+                i = nextIndex.index;
+            }
+            const varName = isNext(() => true, true, i, tokens, false, true) as { result: boolean, index: number };
+            if (varName.index === i + 1 || varName.result === false)
               throw new SyntaxError(current, 'Missing variable name');
-            if (tokens[nextIndex.index].text === 'let')
-              i = nextIndex.index;
-          }
-          const varName = isNext(() => true, true, i, tokens, false, true) as { result: boolean, index: number };
-          if (varName.index === i + 1 || varName.result === false)
-            throw new SyntaxError(current, 'Missing variable name');
-          if (tokens[varName.index].category !== undefined && tokens[varName.index].category !== 'context_keyword')
-            throw new SyntaxError(tokens[varName.index]);
-          if (tokens[varName.index].text === '_' || tokens[varName.index].text.startsWith(autoModifiedVarNamePrefix) || tokens[varName.index].text.startsWith('__'))
-            if (current.text === 'const')
-              throw new SyntaxError(tokens[varName.index], 'Cannot use this constant name');
-            else
-              throw new SyntaxError(tokens[varName.index], 'Cannot use this variable name');
+            if (tokens[varName.index].category !== undefined && tokens[varName.index].category !== 'context_keyword')
+              throw new SyntaxError(tokens[varName.index]);
+            if (tokens[varName.index].text === '_' || tokens[varName.index].text.startsWith(autoModifiedVarNamePrefix) || tokens[varName.index].text.startsWith('__'))
+              if (current.text === 'const')
+                throw new SyntaxError(tokens[varName.index], 'Cannot use this constant name');
+              else
+                throw new SyntaxError(tokens[varName.index], 'Cannot use this variable name');
 
-          const assignmentIndex = tokens.findIndex((s, j) => j > varName.index && assignmentOperators.has(s.text));
+            const assignmentIndex = tokens.findIndex((s, j) => j > varName.index && assignmentOperators.has(s.text));
 
-          const colonIndex = tokens.findIndex((s, j) => j > varName.index && j < assignmentIndex && s.text === ':');
+            const colonIndex = tokens.findIndex((s, j) => j > varName.index && j < assignmentIndex && s.text === ':');
 
-          let declaratorIndex;
-          let varType: true | Type;
-          if (colonIndex !== -1) {
-            const atMarkIndex = tokens.findIndex((s, j) => j > varName.index && j < assignmentIndex && s.text === '@');
+            let declaratorIndex;
+            let varType: true | Type;
+            if (colonIndex !== -1) {
+              const atMarkIndex = tokens.findIndex((s, j) => j > varName.index && j < assignmentIndex && s.text === '@');
 
-            if (container !== 'class' && container !== 'struct' && atMarkIndex !== -1)
-              throw new SyntaxError(tokens[atMarkIndex], 'Accessibility modifier is not allowed here');
+              if (container !== 'class' && container !== 'struct' && atMarkIndex !== -1)
+                throw new SyntaxError(tokens[atMarkIndex], 'Accessibility modifier is not allowed here');
 
-            const removed = removeEmptyWords(tokens.slice(colonIndex + 1, atMarkIndex === -1 ? assignmentIndex : atMarkIndex));
-            const type = parseType(removed, false, true, false);
-            if (type.type === null)
-              throw new SyntaxError(tokens[colonIndex], 'Missing type');
+              const removed = removeEmptyWords(tokens.slice(colonIndex + 1, atMarkIndex === -1 ? assignmentIndex : atMarkIndex));
+              const type = parseType(removed, false, true, false);
+              if (type.type === null)
+                throw new SyntaxError(tokens[colonIndex], 'Missing type');
 
-            if (container === 'class' || container === 'struct') {
-              if (atMarkIndex !== -1) {
-                const modifiers = searchModifiers(tokens.slice(atMarkIndex + 1, assignmentIndex))
-                converted.push(...modifiers.map(x => x.text + ' '));
+              if (container === 'class' || container === 'struct') {
+                if (atMarkIndex !== -1) {
+                  const modifiers = searchModifiers(tokens.slice(atMarkIndex + 1, assignmentIndex))
+                  converted.push(...modifiers.map(x => x.text + ' '));
+                }
+              } else {
+                const unexpected = removed.slice(colonIndex + 1 + type.endAt + 1).findIndex(s => s.category !== 'comment' && s.category !== 'space' && s.category !== 'line_break');
+                if (unexpected !== -1)
+                  throw new SyntaxError(tokens[unexpected]);
+              }
+
+              converted.push(convertType(type.type, false, false));
+              varType = type.type;
+              declaratorIndex = converted.length - 1;
+              converted.push(` ${tokens[varName.index].text} ${tokens[assignmentIndex].text} `);
+            } else {
+              if (container === 'class' || container === 'struct')
+                throw new SyntaxError(tokens[varName.index], 'Type inference is only allowed for local variables');
+              const unexpected = tokens.slice(varName.index + 1, assignmentIndex).find(s => s.category !== 'comment' && s.category !== 'space' && s.category !== 'line_break');
+              if (unexpected !== undefined)
+                throw new SyntaxError(unexpected);
+              converted.push('var');
+              varType = true;
+              declaratorIndex = converted.length - 1;
+              converted.push(` ${tokens[varName.index].text} ${tokens[assignmentIndex].text} `);
+            }
+
+            resetModifiers();
+
+            const rightSideStartIndex = isNext(() => true, true, assignmentIndex, tokens, false, true) as { result: boolean, index: number };
+            if (rightSideStartIndex.result === false)
+              throw new UnhandledError(tokens[assignmentIndex + 1]);
+            lastSuccessful = {
+              converted: copied.converted,
+              decorations: copied.decorations,
+              modified: copied.modified,
+              i: originalI,
+              previousI: previousI,
+            }
+            const rightSide = convertRightSide(tokens.slice(rightSideStartIndex.index), firstConvertedLength - 1, varType, container !== 'fn', indentLevel, errored ? testingFnTokens : []);
+            testingFnTokens = rightSide.testingFnTokens;
+
+            if (current.text === 'const') {
+              changeKind(tokens[varName.index], 'name.const', true);
+              if (rightSide.isConst) {
+                converted.splice(declaratorIndex, 0, 'const ');
+              } else {
+                throw new SyntaxError(tokens[varName.index], 'Const must be initialized with constant value');
               }
             } else {
-              const unexpected = removed.slice(colonIndex + 1 + type.endAt + 1).findIndex(s => s.category !== 'comment' && s.category !== 'space' && s.category !== 'line_break');
+              changeKind(tokens[varName.index], 'name.var', true);
+              if (current.text !== 'let') {
+                if (container !== 'class' && container !== 'struct' && current.text.includes('immut'))
+                  throw new SyntaxError(tokens[varName.index], 'Immutable is only allowed for fields');
+                if (colonIndex === -1)
+                  throw new SyntaxError(tokens[varName.index], 'Immutable is only allowed for fields with explicit type');
+
+                switch (current.text) {
+                  case '--immut':
+                    current.text = 'immut';
+                    converted.splice(declaratorIndex, 0, 'readonly ');
+                    break;
+                  case '--ref':
+                    current.text = 'ref';
+                    converted.splice(declaratorIndex, 0, 'ref ');
+                    break;
+                  case '--immut-ref':
+                    current.text = 'ref';
+                    converted.splice(declaratorIndex, 0, 'readonly ref ');
+                    break;
+                  case '--ref-immut':
+                    current.text = 'immut';
+                    converted.splice(declaratorIndex, 0, 'ref readonly ');
+                    break;
+                  case '--immut-ref-immut':
+                    current.text = 'immut';
+                    converted.splice(declaratorIndex, 0, 'readonly ref readonly ');
+                    break;
+                }
+              }
+            }
+            i = rightSide.endAt + rightSideStartIndex.index - 1;
+            break;
+          }
+          case 'prop': {
+            const firstConvertedLength = converted.length;
+
+            const nameIndex = isNext(() => true, true, i, tokens, false, true) as { result: boolean, index: number };
+            if (nameIndex.result === false || nameIndex.index === i + 1 || (tokens[nameIndex.index].category !== 'context_keyword' && tokens[nameIndex.index].category !== undefined))
+              throw new SyntaxError(current, 'Missing property name');
+            changeKind(tokens[nameIndex.index], 'name.prop', true);
+            if (tokens[nameIndex.index].text === '_' || tokens[nameIndex.index].text.startsWith(autoModifiedVarNamePrefix) || tokens[nameIndex.index].text.startsWith('__'))
+              throw new SyntaxError(tokens[nameIndex.index], 'Cannot use this property name');
+
+            const colonIndex = isNext(() => true, true, nameIndex.index, tokens, false, true) as { result: boolean, index: number };
+            if (colonIndex.result === false || tokens[colonIndex.index].text !== ':')
+              throw new SyntaxError(current, 'Missing colon');
+
+            let assignmentIndex = -1;
+            let atMarkIndex = -1;
+            let isAssignmentArrow = false;
+            let braceCount = 0;
+            for (let j = colonIndex.index + 1; j < tokens.length; j++) {
+              if ((assignmentOperators.has(tokens[j].text) || tokens[j].text === '=>') && braceCount === 0 && assignmentIndex === -1) {
+                assignmentIndex = j;
+                if (tokens[j].text === '=>')
+                  isAssignmentArrow = true;
+                break;
+              } else if (tokens[j].text === '@' && braceCount === 0) {
+                atMarkIndex = j;
+                if (assignmentIndex !== -1)
+                  throw new SyntaxError(tokens[atMarkIndex], 'Accessibility modifier must be before assignment');
+              } else if (tokens[j].text === '{') {
+                braceCount++;
+              } else if (tokens[j].text === '}') {
+                braceCount--;
+              }
+            }
+            if (assignmentIndex === -1) {
+              throw new SyntaxError(tokens[nameIndex.index], 'Missing assignment or lambda expression');
+            }
+
+            let accessorLeftBraceIndex = -1;
+            let accessorRightBraceIndex = -1;
+            braceCount = 0;
+            for (let j = colonIndex.index + 1; j < assignmentIndex; j++) {
+              if (tokens[j].text === '{') {
+                if (braceCount === 0 && isNext(token => token.text === 'get' || token.text === 'immut', true, j, tokens, false, false)) {
+                  accessorLeftBraceIndex = j;
+                  break;
+                } else
+                  braceCount++;
+              } else if (tokens[j].text === '}') {
+                braceCount--;
+              }
+            }
+            if (accessorLeftBraceIndex > assignmentIndex)
+              accessorLeftBraceIndex = -1;
+            if (accessorLeftBraceIndex !== -1) {
+              braceCount = 1;
+              for (let j = accessorLeftBraceIndex + 1; j < tokens.length; j++) {
+                if (tokens[j].text === '}') {
+                  braceCount--;
+                  if (braceCount === 0) {
+                    accessorRightBraceIndex = j;
+                    break;
+                  }
+                } else if (tokens[j].text === '{') {
+                  braceCount++;
+                }
+              }
+              if (accessorRightBraceIndex === -1 || accessorRightBraceIndex > assignmentIndex)
+                throw new SyntaxError(tokens[accessorLeftBraceIndex], 'Missing right brace');
+              const unexpected = indexOfNotBlankOrComment(accessorRightBraceIndex + 1, atMarkIndex === -1 ? assignmentIndex : atMarkIndex);
               if (unexpected !== -1)
                 throw new SyntaxError(tokens[unexpected]);
             }
 
-            converted.push(convertType(type.type, false, false));
-            varType = type.type;
-            declaratorIndex = converted.length - 1;
-            converted.push(` ${tokens[varName.index].text} ${tokens[assignmentIndex].text} `);
-          } else {
-            if (container === 'class' || container === 'struct')
-              throw new SyntaxError(tokens[varName.index], 'Type inference is only allowed for local variables');
-            const unexpected = tokens.slice(varName.index + 1, assignmentIndex).find(s => s.category !== 'comment' && s.category !== 'space' && s.category !== 'line_break');
-            if (unexpected !== undefined)
-              throw new SyntaxError(unexpected);
-            converted.push('var');
-            varType = true;
-            declaratorIndex = converted.length - 1;
-            converted.push(` ${tokens[varName.index].text} ${tokens[assignmentIndex].text} `);
-          }
+            if (atMarkIndex === -1 && accessorLeftBraceIndex === -1) {
+              // prop Value: int => <rightSide>;
+              if (isAssignmentArrow === false)
+                throw new SyntaxError(tokens[assignmentIndex], 'Without accessors, expression body is required');
+              const type = parseType(removeEmptyWords(tokens.slice(colonIndex.index + 1, assignmentIndex)), false, true, false);
+              if (type.type === null)
+                throw new SyntaxError(tokens[nameIndex.index], 'Missing type');
+              converted.push(convertType(type.type, false, false));
+              converted.push(` ${tokens[nameIndex.index].text} `);
 
-          resetModifiers();
-
-          const rightSideStartIndex = isNext(() => true, true, assignmentIndex, tokens, false, true) as { result: boolean, index: number };
-          if (rightSideStartIndex.result === false)
-            throw new UnhandledError(tokens[assignmentIndex + 1]);
-          const rightSide = convertRightSide(tokens.slice(rightSideStartIndex.index), firstConvertedLength - 1, varType, container !== 'fn', indentLevel);
-
-          if (current.text === 'const') {
-            changeKind(tokens[varName.index], 'name.const', true);
-            if (rightSide.isConst) {
-              converted.splice(declaratorIndex, 0, 'const ');
-            } else {
-              throw new SyntaxError(tokens[varName.index], 'Const must be initialized with constant value');
-            }
-          } else {
-            changeKind(tokens[varName.index], 'name.var', true);
-            if (current.text !== 'let') {
-              if (container !== 'class' && container !== 'struct' && current.text.includes('immut'))
-                throw new SyntaxError(tokens[varName.index], 'Immutable is only allowed for fields');
-              if (colonIndex === -1)
-                throw new SyntaxError(tokens[varName.index], 'Immutable is only allowed for fields with explicit type');
-
-              switch (current.text) {
-                case '--immut':
-                  current.text = 'immut';
-                  converted.splice(declaratorIndex, 0, 'readonly ');
-                  break;
-                case '--ref':
-                  current.text = 'ref';
-                  converted.splice(declaratorIndex, 0, 'ref ');
-                  break;
-                case '--immut-ref':
-                  current.text = 'ref';
-                  converted.splice(declaratorIndex, 0, 'readonly ref ');
-                  break;
-                case '--ref-immut':
-                  current.text = 'immut';
-                  converted.splice(declaratorIndex, 0, 'ref readonly ');
-                  break;
-                case '--immut-ref-immut':
-                  current.text = 'immut';
-                  converted.splice(declaratorIndex, 0, 'readonly ref readonly ');
-                  break;
-              }
-            }
-          }
-          i = rightSide.endAt + rightSideStartIndex.index - 1;
-          break;
-        }
-        case 'prop': {
-          const firstConvertedLength = converted.length;
-
-          const nameIndex = isNext(() => true, true, i, tokens, false, true) as { result: boolean, index: number };
-          if (nameIndex.result === false || nameIndex.index === i + 1 || (tokens[nameIndex.index].category !== 'context_keyword' && tokens[nameIndex.index].category !== undefined))
-            throw new SyntaxError(current, 'Missing property name');
-          changeKind(tokens[nameIndex.index], 'name.prop', true);
-          if (tokens[nameIndex.index].text === '_' || tokens[nameIndex.index].text.startsWith(autoModifiedVarNamePrefix) || tokens[nameIndex.index].text.startsWith('__'))
-            throw new SyntaxError(tokens[nameIndex.index], 'Cannot use this property name');
-
-          const colonIndex = isNext(() => true, true, nameIndex.index, tokens, false, true) as { result: boolean, index: number };
-          if (colonIndex.result === false || tokens[colonIndex.index].text !== ':')
-            throw new SyntaxError(current, 'Missing colon');
-
-          let assignmentIndex = -1;
-          let atMarkIndex = -1;
-          let isAssignmentArrow = false;
-          let braceCount = 0;
-          for (let j = colonIndex.index + 1; j < tokens.length; j++) {
-            if ((assignmentOperators.has(tokens[j].text) || tokens[j].text === '=>') && braceCount === 0 && assignmentIndex === -1) {
-              assignmentIndex = j;
-              if (tokens[j].text === '=>')
-                isAssignmentArrow = true;
-              break;
-            } else if (tokens[j].text === '@' && braceCount === 0) {
-              atMarkIndex = j;
-              if (assignmentIndex !== -1)
-                throw new SyntaxError(tokens[atMarkIndex], 'Accessibility modifier must be before assignment');
-            } else if (tokens[j].text === '{') {
-              braceCount++;
-            } else if (tokens[j].text === '}') {
-              braceCount--;
-            }
-          }
-          if (assignmentIndex === -1) {
-            throw new SyntaxError(tokens[nameIndex.index], 'Missing assignment or lambda expression');
-          }
-
-          let accessorLeftBraceIndex = -1;
-          let accessorRightBraceIndex = -1;
-          braceCount = 0;
-          for (let j = colonIndex.index + 1; j < assignmentIndex; j++) {
-            if (tokens[j].text === '{') {
-              if (braceCount === 0 && isNext(token => token.text === 'get' || token.text === 'immut', true, j, tokens, false, false)) {
-                accessorLeftBraceIndex = j;
-                break;
-              } else
-                braceCount++;
-            } else if (tokens[j].text === '}') {
-              braceCount--;
-            }
-          }
-          if (accessorLeftBraceIndex > assignmentIndex)
-            accessorLeftBraceIndex = -1;
-          if (accessorLeftBraceIndex !== -1) {
-            braceCount = 1;
-            for (let j = accessorLeftBraceIndex + 1; j < tokens.length; j++) {
-              if (tokens[j].text === '}') {
-                braceCount--;
-                if (braceCount === 0) {
-                  accessorRightBraceIndex = j;
-                  break;
-                }
-              } else if (tokens[j].text === '{') {
-                braceCount++;
-              }
-            }
-            if (accessorRightBraceIndex === -1 || accessorRightBraceIndex > assignmentIndex)
-              throw new SyntaxError(tokens[accessorLeftBraceIndex], 'Missing right brace');
-            const unexpected = indexOfNotBlankOrComment(accessorRightBraceIndex + 1, atMarkIndex === -1 ? assignmentIndex : atMarkIndex);
-            if (unexpected !== -1)
-              throw new SyntaxError(tokens[unexpected]);
-          }
-
-          if (atMarkIndex === -1 && accessorLeftBraceIndex === -1) {
-            // prop Value: int => <rightSide>;
-            if (isAssignmentArrow === false)
-              throw new SyntaxError(tokens[assignmentIndex], 'Without accessors, expression body is required');
-            const type = parseType(removeEmptyWords(tokens.slice(colonIndex.index + 1, assignmentIndex)), false, true, false);
-            if (type.type === null)
-              throw new SyntaxError(tokens[nameIndex.index], 'Missing type');
-            converted.push(convertType(type.type, false, false));
-            converted.push(` ${tokens[nameIndex.index].text} `);
-
-            const nextToArrowToken = isNext(() => true, true, assignmentIndex + 1, tokens, true, false) as { result: boolean, item: BaseToken | null };
-            if (nextToArrowToken.item === null)
-              throw new SyntaxError(tokens[assignmentIndex]);
-            if (nextToArrowToken.item.text === '{') {
-              let rightSideBraceIndex = -1;
-              let braceCount = 1;
-              for (let j = assignmentIndex + 1; j < tokens.length; j++) {
-                if (tokens[j].text === '{') {
-                  braceCount++;
-                } else if (tokens[j].text === '}') {
-                  braceCount--;
-                  if (braceCount === 0) {
-                    rightSideBraceIndex = j;
-                    break;
+              const nextToArrowToken = isNext(() => true, true, assignmentIndex + 1, tokens, true, false) as { result: boolean, item: BaseToken | null };
+              if (nextToArrowToken.item === null)
+                throw new SyntaxError(tokens[assignmentIndex]);
+              if (nextToArrowToken.item.text === '{') {
+                let rightSideBraceIndex = -1;
+                let braceCount = 1;
+                for (let j = assignmentIndex + 1; j < tokens.length; j++) {
+                  if (tokens[j].text === '{') {
+                    braceCount++;
+                  } else if (tokens[j].text === '}') {
+                    braceCount--;
+                    if (braceCount === 0) {
+                      rightSideBraceIndex = j;
+                      break;
+                    }
                   }
                 }
+                if (rightSideBraceIndex === -1)
+                  throw new SyntaxError(nextToArrowToken.item, 'Missing right brace');
+
+                converted.push('{\r\n');
+                converted.push(' '.repeat((indentLevel + 1) * indentCount));
+                converted.push('get {\r\n');
+                convertRightSide(tokens.slice(assignmentIndex + 1, rightSideBraceIndex), firstConvertedLength - 1, type.type, true, indentLevel + 1);
+                converted.push('\r\n');
+                converted.push(' '.repeat((indentLevel + 1) * indentCount));
+                converted.push('}\r\n');
+                converted.push(' '.repeat((indentLevel + 1) * indentCount));
+                converted.push('}\r\n');
+
+                i = rightSideBraceIndex;
+              } else {
+                converted.push('=> ');
+                const rightSide = convertRightSide(tokens.slice(assignmentIndex + 1), firstConvertedLength - 1, type.type, true, indentLevel);
+                i = rightSide.endAt + assignmentIndex;
               }
-              if (rightSideBraceIndex === -1)
-                throw new SyntaxError(nextToArrowToken.item, 'Missing right brace');
+            } else if (atMarkIndex !== -1 && accessorLeftBraceIndex === -1) {
+              // prop Value: int @public => <rightSide>;
+              if (isAssignmentArrow === false)
+                throw new SyntaxError(tokens[assignmentIndex], 'Without accessors, expression body is required');
 
-              converted.push('{\r\n');
-              converted.push(' '.repeat((indentLevel + 1) * indentCount));
-              converted.push('get {\r\n');
-              convertRightSide(tokens.slice(assignmentIndex + 1, rightSideBraceIndex), firstConvertedLength - 1, type.type, true, indentLevel + 1);
-              converted.push('\r\n');
-              converted.push(' '.repeat((indentLevel + 1) * indentCount));
-              converted.push('}\r\n');
-              converted.push(' '.repeat((indentLevel + 1) * indentCount));
-              converted.push('}\r\n');
+              const modifiers = searchModifiers(tokens.slice(atMarkIndex + 1, assignmentIndex));
+              converted.push(...modifiers.map(x => x.text + ' '));
 
-              i = rightSideBraceIndex;
-            } else {
-              converted.push('=> ');
-              const rightSide = convertRightSide(tokens.slice(assignmentIndex + 1), firstConvertedLength - 1, type.type, true, indentLevel);
-              i = rightSide.endAt + assignmentIndex;
-            }
-          } else if (atMarkIndex !== -1 && accessorLeftBraceIndex === -1) {
-            // prop Value: int @public => <rightSide>;
-            if (isAssignmentArrow === false)
-              throw new SyntaxError(tokens[assignmentIndex], 'Without accessors, expression body is required');
+              const type = parseType(removeEmptyWords(tokens.slice(colonIndex.index + 1, atMarkIndex)), false, true, false);
+              if (type.type === null)
+                throw new SyntaxError(tokens[nameIndex.index], 'Missing type');
 
-            const modifiers = searchModifiers(tokens.slice(atMarkIndex + 1, assignmentIndex));
-            converted.push(...modifiers.map(x => x.text + ' '));
+              converted.push(convertType(type.type, false, false));
+              converted.push(` ${tokens[nameIndex.index].text}`);
 
-            const type = parseType(removeEmptyWords(tokens.slice(colonIndex.index + 1, atMarkIndex)), false, true, false);
-            if (type.type === null)
-              throw new SyntaxError(tokens[nameIndex.index], 'Missing type');
-
-            converted.push(convertType(type.type, false, false));
-            converted.push(` ${tokens[nameIndex.index].text}`);
-
-            const nextToArrowToken = isNext(() => true, true, assignmentIndex + 1, tokens, true, false) as { result: boolean, item: BaseToken | null };
-            if (nextToArrowToken.item === null)
-              throw new SyntaxError(tokens[assignmentIndex]);
-            if (nextToArrowToken.item.text === '{') {
-              let rightSideBraceIndex = -1;
-              let braceCount = 1;
-              for (let j = assignmentIndex + 1; j < tokens.length; j++) {
-                if (tokens[j].text === '{') {
-                  braceCount++;
-                } else if (tokens[j].text === '}') {
-                  braceCount--;
-                  if (braceCount === 0) {
-                    rightSideBraceIndex = j;
-                    break;
+              const nextToArrowToken = isNext(() => true, true, assignmentIndex + 1, tokens, true, false) as { result: boolean, item: BaseToken | null };
+              if (nextToArrowToken.item === null)
+                throw new SyntaxError(tokens[assignmentIndex]);
+              if (nextToArrowToken.item.text === '{') {
+                let rightSideBraceIndex = -1;
+                let braceCount = 1;
+                for (let j = assignmentIndex + 1; j < tokens.length; j++) {
+                  if (tokens[j].text === '{') {
+                    braceCount++;
+                  } else if (tokens[j].text === '}') {
+                    braceCount--;
+                    if (braceCount === 0) {
+                      rightSideBraceIndex = j;
+                      break;
+                    }
                   }
                 }
+                if (rightSideBraceIndex === -1)
+                  throw new SyntaxError(nextToArrowToken.item, 'Missing right brace');
+
+                converted.push(' {\r\n');
+                converted.push(' '.repeat((indentLevel + 1) * indentCount));
+                converted.push('get {\r\n');
+                convertBlock(tokens.slice(assignmentIndex + 1, rightSideBraceIndex), 'fn', indentLevel + 1);
+                converted.push('\r\n');
+                converted.push(' '.repeat((indentLevel + 1) * indentCount));
+                converted.push('}\r\n');
+                converted.push(' '.repeat((indentLevel + 1) * indentCount));
+                converted.push('}\r\n');
+
+                i = rightSideBraceIndex;
+              } else {
+                converted.push(' =>');
+                const rightSide = convertRightSide(tokens.slice(assignmentIndex + 1), firstConvertedLength - 1, type.type, true, indentLevel);
+                i = rightSide.endAt + assignmentIndex;
               }
-              if (rightSideBraceIndex === -1)
-                throw new SyntaxError(nextToArrowToken.item, 'Missing right brace');
+            } else if (accessorLeftBraceIndex !== -1 && atMarkIndex === -1) {
+              // prop Value: int { get( @public); set; } = <rightSide>;
+              if (isAssignmentArrow === true)
+                throw new SyntaxError(tokens[assignmentIndex], 'With accessors, expression body is not allowed');
 
-              converted.push(' {\r\n');
-              converted.push(' '.repeat((indentLevel + 1) * indentCount));
-              converted.push('get {\r\n');
-              convertBlock(tokens.slice(assignmentIndex + 1, rightSideBraceIndex), 'fn', indentLevel + 1);
-              converted.push('\r\n');
-              converted.push(' '.repeat((indentLevel + 1) * indentCount));
-              converted.push('}\r\n');
-              converted.push(' '.repeat((indentLevel + 1) * indentCount));
-              converted.push('}\r\n');
+              const removed = removeEmptyWords(tokens.slice(colonIndex.index + 1, accessorLeftBraceIndex));
+              const type = parseType(removed, false, true);
+              if (type.type === null)
+                throw new SyntaxError(tokens[nameIndex.index], 'Missing type');
+              converted.push(convertType(type.type, false, false));
 
-              i = rightSideBraceIndex;
-            } else {
-              converted.push(' =>');
+              converted.push(` ${tokens[nameIndex.index].text} `);
+
+              const typeEndAt = tokens.findIndex(s => s.tokenId === removed[type.endAt - 1].tokenId);
+              convertPropAccessor(typeEndAt + 1, assignmentIndex, type.type);
+
+              converted.push(' = ');
+
               const rightSide = convertRightSide(tokens.slice(assignmentIndex + 1), firstConvertedLength - 1, type.type, true, indentLevel);
+
               i = rightSide.endAt + assignmentIndex;
-            }
-          } else if (accessorLeftBraceIndex !== -1 && atMarkIndex === -1) {
-            // prop Value: int { get( @public); set; } = <rightSide>;
-            if (isAssignmentArrow === true)
-              throw new SyntaxError(tokens[assignmentIndex], 'With accessors, expression body is not allowed');
+            } else if (accessorLeftBraceIndex !== -1 && atMarkIndex !== -1) {
+              // prop Value: int { get; set; } @public = <rightSide>;
+              if (isAssignmentArrow === true)
+                throw new SyntaxError(tokens[assignmentIndex], 'With accessors, expression body is not allowed');
 
-            const removed = removeEmptyWords(tokens.slice(colonIndex.index + 1, accessorLeftBraceIndex));
-            const type = parseType(removed, false, true);
-            if (type.type === null)
-              throw new SyntaxError(tokens[nameIndex.index], 'Missing type');
-            converted.push(convertType(type.type, false, false));
+              const modifiers = searchModifiers(tokens.slice(atMarkIndex + 1, assignmentIndex));
+              converted.push(...modifiers.map(x => x.text + ' '));
 
-            converted.push(` ${tokens[nameIndex.index].text} `);
+              const removed = removeEmptyWords(tokens.slice(colonIndex.index + 1, accessorLeftBraceIndex));
+              const type = parseType(removed, false, true);
+              if (type.type === null)
+                throw new SyntaxError(tokens[nameIndex.index], 'Missing type');
+              converted.push(convertType(type.type, false, false));
 
-            const typeEndAt = tokens.findIndex(s => s.tokenId === removed[type.endAt - 1].tokenId);
-            convertPropAccessor(typeEndAt + 1, assignmentIndex, type.type);
+              converted.push(` ${tokens[nameIndex.index].text} `);
 
-            converted.push(' = ');
+              const typeEndAt = tokens.findIndex(s => s.tokenId === removed[type.endAt - 1].tokenId);
+              if (typeEndAt === -1)
+                throw new UnhandledError(current);
+              const propAccessor = convertPropAccessor(typeEndAt + 1, atMarkIndex, type.type);
+              if (propAccessor.hasModifiers)
+                throw new SyntaxError(tokens[atMarkIndex], 'Duplicate accessibility modifier');
 
-            const rightSide = convertRightSide(tokens.slice(assignmentIndex + 1), firstConvertedLength - 1, type.type, true, indentLevel);
+              converted.push(' = ');
 
-            i = rightSide.endAt + assignmentIndex;
-          } else if (accessorLeftBraceIndex !== -1 && atMarkIndex !== -1) {
-            // prop Value: int { get; set; } @public = <rightSide>;
-            if (isAssignmentArrow === true)
-              throw new SyntaxError(tokens[assignmentIndex], 'With accessors, expression body is not allowed');
+              const rightSide = convertRightSide(tokens.slice(assignmentIndex + 1), firstConvertedLength - 1, type.type, true, indentLevel);
 
-            const modifiers = searchModifiers(tokens.slice(atMarkIndex + 1, assignmentIndex));
-            converted.push(...modifiers.map(x => x.text + ' '));
-
-            const removed = removeEmptyWords(tokens.slice(colonIndex.index + 1, accessorLeftBraceIndex));
-            const type = parseType(removed, false, true);
-            if (type.type === null)
-              throw new SyntaxError(tokens[nameIndex.index], 'Missing type');
-            converted.push(convertType(type.type, false, false));
-
-            converted.push(` ${tokens[nameIndex.index].text} `);
-
-            const typeEndAt = tokens.findIndex(s => s.tokenId === removed[type.endAt - 1].tokenId);
-            if (typeEndAt === -1)
+              i = rightSide.endAt + assignmentIndex;
+            } else {
               throw new UnhandledError(current);
-            const propAccessor = convertPropAccessor(typeEndAt + 1, atMarkIndex, type.type);
-            if (propAccessor.hasModifiers)
-              throw new SyntaxError(tokens[atMarkIndex], 'Duplicate accessibility modifier');
+            }
 
-            converted.push(' = ');
+            function convertPropAccessor(start: number, end: number, propType: Type): { hasModifiers: boolean } {
+              const removed = removeEmptyWords(tokens.slice(start, end));
+              if (removed[0].text !== '{')
+                throw new SyntaxError(removed[0], 'Missing left brace');
+              if (removed[removed.length - 1].text !== '}')
+                throw new SyntaxError(removed[removed.length - 1], 'Missing right brace');
 
-            const rightSide = convertRightSide(tokens.slice(assignmentIndex + 1), firstConvertedLength - 1, type.type, true, indentLevel);
+              const isAutoProp = removed.slice(1, removed.length - 1).findIndex(s => s.text === '{' || s.text === '=>') === -1;
 
-            i = rightSide.endAt + assignmentIndex;
-          } else {
-            throw new UnhandledError(current);
-          }
+              let hasModifiers = false;
+              if (isAutoProp) {
+                converted.push('{ ');
 
-          function convertPropAccessor(start: number, end: number, propType: Type): { hasModifiers: boolean } {
-            const removed = removeEmptyWords(tokens.slice(start, end));
-            if (removed[0].text !== '{')
-              throw new SyntaxError(removed[0], 'Missing left brace');
-            if (removed[removed.length - 1].text !== '}')
-              throw new SyntaxError(removed[removed.length - 1], 'Missing right brace');
+                let getterEndIndex = -1;
+                if (removed[1].text === 'immut') {
+                  if (removed[2].text === 'get')
+                    if (removed[3].text === ';') {
+                      converted.push('readonly get; ');
+                      getterEndIndex = 3;
+                    } else if (removed[3].text === '@') {
+                      hasModifiers = true;
+                      const semicolonIndex = removed.findIndex((s, j) => s.text === ';' && j > 3);
+                      if (semicolonIndex === -1)
+                        throw new SyntaxError(removed[getterEndIndex + 1], 'Missing semicolon');
 
-            const isAutoProp = removed.slice(1, removed.length - 1).findIndex(s => s.text === '{' || s.text === '=>') === -1;
+                      const modifiers = searchModifiers(removed.slice(4, semicolonIndex));
 
-            let hasModifiers = false;
-            if (isAutoProp) {
-              converted.push('{ ');
+                      converted.push(...modifiers.map(x => x.text + ' '));
+                      converted.push('readonly get; ');
 
-              let getterEndIndex = -1;
-              if (removed[1].text === 'immut') {
-                if (removed[2].text === 'get')
-                  if (removed[3].text === ';') {
-                    converted.push('readonly get; ');
-                    getterEndIndex = 3;
-                  } else if (removed[3].text === '@') {
+                      getterEndIndex = semicolonIndex;
+                    } else
+                      throw new SyntaxError(removed[3]);
+                  else
+                    throw new SyntaxError(removed[2]);
+                }
+                else if (removed[1].text === 'get') {
+                  if (removed[2].text === ';') {
+                    converted.push('get; ');
+                    getterEndIndex = 2;
+                  } else if (removed[2].text === '@') {
                     hasModifiers = true;
-                    const semicolonIndex = removed.findIndex((s, j) => s.text === ';' && j > 3);
+                    const semicolonIndex = removed.findIndex((s, j) => s.text === ';' && j > 2);
                     if (semicolonIndex === -1)
-                      throw new SyntaxError(removed[getterEndIndex + 1], 'Missing semicolon');
+                      throw new SyntaxError(removed[2], 'Missing semicolon');
 
-                    const modifiers = searchModifiers(removed.slice(4, semicolonIndex));
+                    const modifiers = searchModifiers(removed.slice(3, semicolonIndex));
 
                     converted.push(...modifiers.map(x => x.text + ' '));
-                    converted.push('readonly get; ');
+                    converted.push('get; ');
 
                     getterEndIndex = semicolonIndex;
                   } else
-                    throw new SyntaxError(removed[3]);
-                else
-                  throw new SyntaxError(removed[2]);
-              }
-              else if (removed[1].text === 'get') {
-                if (removed[2].text === ';') {
-                  converted.push('get; ');
-                  getterEndIndex = 2;
-                } else if (removed[2].text === '@') {
-                  hasModifiers = true;
-                  const semicolonIndex = removed.findIndex((s, j) => s.text === ';' && j > 2);
-                  if (semicolonIndex === -1)
-                    throw new SyntaxError(removed[2], 'Missing semicolon');
+                    throw new SyntaxError(removed[2]);
+                } else {
+                  throw new SyntaxError(removed[1]);
+                }
 
-                  const modifiers = searchModifiers(removed.slice(3, semicolonIndex));
+                if (getterEndIndex === -1)
+                  throw new UnhandledError(removed[0]);
 
-                  converted.push(...modifiers.map(x => x.text + ' '));
-                  converted.push('get; ');
+                let setterEndIndex = -1;
+                if (removed[getterEndIndex + 1].text === 'immut') {
+                  if (removed[getterEndIndex + 2].text === 'set' || removed[getterEndIndex + 2].text === 'init')
+                    if (removed[getterEndIndex + 3].text === ';') {
+                      converted.push(`readonly ${removed[getterEndIndex + 2].text}; `);
+                      setterEndIndex = getterEndIndex + 3;
+                    } else if (removed[getterEndIndex + 3].text === '@') {
+                      hasModifiers = true;
+                      const semicolonIndex = removed.findIndex((s, j) => s.text === ';' && j > getterEndIndex + 3);
+                      if (semicolonIndex === -1)
+                        throw new SyntaxError(removed[getterEndIndex + 1], 'Missing semicolon');
 
-                  getterEndIndex = semicolonIndex;
-                } else
-                  throw new SyntaxError(removed[2]);
-              } else {
-                throw new SyntaxError(removed[1]);
-              }
+                      const modifiers = searchModifiers(removed.slice(getterEndIndex + 4, semicolonIndex));
 
-              if (getterEndIndex === -1)
-                throw new UnhandledError(removed[0]);
+                      converted.push(...modifiers.map(x => x.text + ' '));
+                      converted.push(`readonly ${removed[getterEndIndex + 2].text}; `);
 
-              let setterEndIndex = -1;
-              if (removed[getterEndIndex + 1].text === 'immut') {
-                if (removed[getterEndIndex + 2].text === 'set' || removed[getterEndIndex + 2].text === 'init')
-                  if (removed[getterEndIndex + 3].text === ';') {
-                    converted.push(`readonly ${removed[getterEndIndex + 2].text}; `);
-                    setterEndIndex = getterEndIndex + 3;
-                  } else if (removed[getterEndIndex + 3].text === '@') {
+                      setterEndIndex = semicolonIndex;
+                    }
+                    else
+                      throw new SyntaxError(removed[getterEndIndex + 3]);
+                  else
+                    throw new SyntaxError(removed[getterEndIndex + 2]);
+                } else if (removed[getterEndIndex + 1].text === 'set' || removed[getterEndIndex + 1].text === 'init') {
+                  if (removed[getterEndIndex + 2].text === ';') {
+                    converted.push(`${removed[getterEndIndex + 1].text}; `);
+                    setterEndIndex = getterEndIndex + 2;
+                  } else if (removed[getterEndIndex + 2].text === '@') {
                     hasModifiers = true;
-                    const semicolonIndex = removed.findIndex((s, j) => s.text === ';' && j > getterEndIndex + 3);
+                    const semicolonIndex = removed.findIndex((s, j) => s.text === ';' && j > getterEndIndex + 2);
                     if (semicolonIndex === -1)
-                      throw new SyntaxError(removed[getterEndIndex + 1], 'Missing semicolon');
+                      throw new SyntaxError(removed[getterEndIndex + 2], 'Missing semicolon');
 
-                    const modifiers = searchModifiers(removed.slice(getterEndIndex + 4, semicolonIndex));
+                    const modifiers = searchModifiers(removed.slice(getterEndIndex + 3, semicolonIndex));
 
                     converted.push(...modifiers.map(x => x.text + ' '));
-                    converted.push(`readonly ${removed[getterEndIndex + 2].text}; `);
+                    converted.push(`${removed[getterEndIndex + 1].text}; `);
 
                     setterEndIndex = semicolonIndex;
-                  }
-                  else
-                    throw new SyntaxError(removed[getterEndIndex + 3]);
-                else
-                  throw new SyntaxError(removed[getterEndIndex + 2]);
-              } else if (removed[getterEndIndex + 1].text === 'set' || removed[getterEndIndex + 1].text === 'init') {
-                if (removed[getterEndIndex + 2].text === ';') {
-                  converted.push(`${removed[getterEndIndex + 1].text}; `);
-                  setterEndIndex = getterEndIndex + 2;
-                } else if (removed[getterEndIndex + 2].text === '@') {
-                  hasModifiers = true;
-                  const semicolonIndex = removed.findIndex((s, j) => s.text === ';' && j > getterEndIndex + 2);
-                  if (semicolonIndex === -1)
-                    throw new SyntaxError(removed[getterEndIndex + 2], 'Missing semicolon');
+                  } else
+                    throw new SyntaxError(removed[getterEndIndex + 2]);
+                } else if (removed[getterEndIndex + 1].text === '}') {
+                  setterEndIndex = removed.length - 2;
+                } else {
+                  throw new SyntaxError(removed[getterEndIndex + 1]);
+                }
 
-                  const modifiers = searchModifiers(removed.slice(getterEndIndex + 3, semicolonIndex));
+                if (setterEndIndex === -1)
+                  throw new UnhandledError(removed[0]);
 
-                  converted.push(...modifiers.map(x => x.text + ' '));
-                  converted.push(`${removed[getterEndIndex + 1].text}; `);
+                if (setterEndIndex !== removed.length - 2)
+                  throw new SyntaxError(removed[setterEndIndex + 1]);
 
-                  setterEndIndex = semicolonIndex;
-                } else
-                  throw new SyntaxError(removed[getterEndIndex + 2]);
-              } else if (removed[getterEndIndex + 1].text === '}') {
-                setterEndIndex = removed.length - 2;
+                converted.push('}');
+                return { hasModifiers: hasModifiers };
               } else {
-                throw new SyntaxError(removed[getterEndIndex + 1]);
-              }
+                let i = 1;
 
-              if (setterEndIndex === -1)
-                throw new UnhandledError(removed[0]);
-
-              if (setterEndIndex !== removed.length - 2)
-                throw new SyntaxError(removed[setterEndIndex + 1]);
-
-              converted.push('}');
-              return { hasModifiers: hasModifiers };
-            } else {
-              let i = 1;
-
-              converted.push('{\r\n');
-              converted.push(' '.repeat((indentLevel + 1) * indentCount));
-              let preConverted = [];
-              if (removed[i].text === 'immut') {
-                preConverted.push('readonly ');
-                i++;
-              } else if (removed[i].text !== 'get')
-                throw new SyntaxError(removed[i]);
-              if (removed[i].text === 'get') {
-                preConverted.push('get ');
-                i++;
-              } else
-                throw new SyntaxError(removed[i]);
-
-              if (removed[i].text === '@') {
-                const modifiersEndIndex = removed.findIndex((s, j) => (s.text === '=>' || s.text === '{') && j > i) - 1;
-                if (modifiersEndIndex === -2)
-                  throw new SyntaxError(removed[i]);
-                const modifiers = searchModifiers(removed.slice(i + 1, modifiersEndIndex + 1));
-                converted.push(...modifiers.map(x => x.text + ' '));
-                i = modifiersEndIndex + 1;
-              }
-              converted.push(...preConverted);
-
-              if ((removed[i].text === '=>' && removed[i + 1].text === '{') || removed[i].text === '{') {
                 converted.push('{\r\n');
-                i = removed[i].text === '=>' ? i + 2 : i + 1;
-                let parenthesisCount = 0;
-                let braceCount = 1;
-                let rightBraceIndex = -1;
-                for (let j = i; j < removed.length; j++) {
-                  if (removed[j].text === '{') {
-                    braceCount++;
-                  } else if (removed[j].text === '}') {
-                    braceCount--;
-                    if (braceCount === 0 && parenthesisCount === 0) {
-                      rightBraceIndex = j;
-                      break;
-                    }
-                  } else if (removed[j].text === '(') {
-                    parenthesisCount++;
-                  } else if (removed[j].text === ')') {
-                    parenthesisCount--;
-                  }
-                }
-                if (rightBraceIndex === -1)
-                  throw new SyntaxError(removed[i], 'Missing right brace');
-
-                const iAtTokens = tokens.findIndex(s => s.tokenId === removed[i].tokenId);
-                if (iAtTokens === -1)
-                  throw new UnhandledError(removed[i]);
-                const rightBraceIndexAtTokens = tokens.findIndex(s => s.tokenId === removed[rightBraceIndex].tokenId);
-                if (rightBraceIndexAtTokens === -1)
-                  throw new UnhandledError(removed[rightBraceIndex]);
-                convertBlock(tokens.slice(iAtTokens, rightBraceIndexAtTokens), 'fn', indentLevel + 2);
-
                 converted.push(' '.repeat((indentLevel + 1) * indentCount));
-                converted.push('}\r\n');
+                let preConverted = [];
+                if (removed[i].text === 'immut') {
+                  preConverted.push('readonly ');
+                  i++;
+                } else if (removed[i].text !== 'get')
+                  throw new SyntaxError(removed[i]);
+                if (removed[i].text === 'get') {
+                  preConverted.push('get ');
+                  i++;
+                } else
+                  throw new SyntaxError(removed[i]);
 
-                i = rightBraceIndex + 1;
-              } else if (removed[i].text === '=>') {
-                converted.push('=> ');
-                let parenthesisCount = 0;
-                let braceCount = 0;
-                let setIndex = -1;
-                for (let j = i + 1; j < removed.length; j++) {
-                  if (removed[j].text === '{') {
-                    braceCount++;
-                  } else if (removed[j].text === '}') {
-                    braceCount--;
-                  } else if (removed[j].text === '(') {
-                    parenthesisCount++;
-                  } else if (removed[j].text === ')') {
-                    parenthesisCount--;
-                  } else if (removed[j].text === 'set' && braceCount === 0 && parenthesisCount === 0) {
-                    setIndex = j;
-                    break;
+                if (removed[i].text === '@') {
+                  const modifiersEndIndex = removed.findIndex((s, j) => (s.text === '=>' || s.text === '{') && j > i) - 1;
+                  if (modifiersEndIndex === -2)
+                    throw new SyntaxError(removed[i]);
+                  const modifiers = searchModifiers(removed.slice(i + 1, modifiersEndIndex + 1));
+                  converted.push(...modifiers.map(x => x.text + ' '));
+                  i = modifiersEndIndex + 1;
+                }
+                converted.push(...preConverted);
+
+                if ((removed[i].text === '=>' && removed[i + 1].text === '{') || removed[i].text === '{') {
+                  converted.push('{\r\n');
+                  i = removed[i].text === '=>' ? i + 2 : i + 1;
+                  let parenthesisCount = 0;
+                  let braceCount = 1;
+                  let rightBraceIndex = -1;
+                  for (let j = i; j < removed.length; j++) {
+                    if (removed[j].text === '{') {
+                      braceCount++;
+                    } else if (removed[j].text === '}') {
+                      braceCount--;
+                      if (braceCount === 0 && parenthesisCount === 0) {
+                        rightBraceIndex = j;
+                        break;
+                      }
+                    } else if (removed[j].text === '(') {
+                      parenthesisCount++;
+                    } else if (removed[j].text === ')') {
+                      parenthesisCount--;
+                    }
                   }
-                }
-                let withoutSet = false;
-                if (setIndex === -1) {
-                  setIndex = end - start - 1;
-                  withoutSet = true;
-                }
+                  if (rightBraceIndex === -1)
+                    throw new SyntaxError(removed[i], 'Missing right brace');
 
-                convertRightSide(removed.slice(i + 1, setIndex), firstConvertedLength - 1, propType, true, indentLevel + 2);
+                  const iAtTokens = tokens.findIndex(s => s.tokenId === removed[i].tokenId);
+                  if (iAtTokens === -1)
+                    throw new UnhandledError(removed[i]);
+                  const rightBraceIndexAtTokens = tokens.findIndex(s => s.tokenId === removed[rightBraceIndex].tokenId);
+                  if (rightBraceIndexAtTokens === -1)
+                    throw new UnhandledError(removed[rightBraceIndex]);
+                  convertBlock(tokens.slice(iAtTokens, rightBraceIndexAtTokens), 'fn', indentLevel + 2);
 
-                if (withoutSet) {
-                  converted.push(' '.repeat((indentLevel + 2) * indentCount));
+                  converted.push(' '.repeat((indentLevel + 1) * indentCount));
                   converted.push('}\r\n');
 
-                  return { hasModifiers: hasModifiers };
-                }
-
-                i = setIndex;
-              } else {
-                throw new SyntaxError(removed[i]);
-              }
-
-              if (removed[i].text === ',' || removed[i].text === ';')
-                i++;
-
-              converted.push(' '.repeat((indentLevel + 1) * indentCount));
-              preConverted = [];
-              if (removed[i].text === 'immut') {
-                preConverted.push('readonly ');
-                i++;
-              } else if (removed[i].text !== 'set' && removed[i].text !== '}')
-                throw new SyntaxError(removed[i]);
-              if (removed[i].text === 'set') {
-                preConverted.push('set ');
-                i++;
-              } else if (removed[i].text === '}') {
-                preConverted.push(' '.repeat((indentLevel + 1) * indentCount));
-                preConverted.push('}');
-                return { hasModifiers: hasModifiers };
-              } else
-                throw new SyntaxError(removed[i]);
-
-              if (removed[i].text === '@') {
-                const modifiersEndIndex = removed.findIndex((s, j) => (s.text === '=>' || s.text === '{') && j > i) - 1;
-                if (modifiersEndIndex === -2)
-                  throw new SyntaxError(removed[i]);
-                const modifiers = searchModifiers(removed.slice(i + 1, modifiersEndIndex + 1));
-                converted.push(...modifiers.map(x => x.text + ' '));
-                i = modifiersEndIndex + 1;
-              }
-              converted.push(...preConverted);
-
-              if ((removed[i].text === '=>' && removed[i + 1].text === '{') || removed[i].text === '{') {
-                converted.push('{\r\n');
-                i = removed[i].text === '=>' ? i + 2 : i + 1;
-                let parenthesisCount = 0;
-                let braceCount = 1;
-                let rightBraceIndex = -1;
-                for (let j = i; j < removed.length; j++) {
-                  if (removed[j].text === '{') {
-                    braceCount++;
-                  } else if (removed[j].text === '}') {
-                    braceCount--;
-                    if (braceCount === 0 && parenthesisCount === 0) {
-                      rightBraceIndex = j;
+                  i = rightBraceIndex + 1;
+                } else if (removed[i].text === '=>') {
+                  converted.push('=> ');
+                  let parenthesisCount = 0;
+                  let braceCount = 0;
+                  let setIndex = -1;
+                  for (let j = i + 1; j < removed.length; j++) {
+                    if (removed[j].text === '{') {
+                      braceCount++;
+                    } else if (removed[j].text === '}') {
+                      braceCount--;
+                    } else if (removed[j].text === '(') {
+                      parenthesisCount++;
+                    } else if (removed[j].text === ')') {
+                      parenthesisCount--;
+                    } else if (removed[j].text === 'set' && braceCount === 0 && parenthesisCount === 0) {
+                      setIndex = j;
                       break;
                     }
-                  } else if (removed[j].text === '(') {
-                    parenthesisCount++;
-                  } else if (removed[j].text === ')') {
-                    parenthesisCount--;
                   }
-                }
-                if (rightBraceIndex === -1)
-                  throw new SyntaxError(removed[i], 'Missing right brace');
+                  let withoutSet = false;
+                  if (setIndex === -1) {
+                    setIndex = end - start - 1;
+                    withoutSet = true;
+                  }
 
-                const iAtTokens = tokens.findIndex(s => s.tokenId === removed[i].tokenId);
-                if (iAtTokens === -1)
-                  throw new UnhandledError(removed[i]);
-                const rightBraceIndexAtTokens = tokens.findIndex(s => s.tokenId === removed[rightBraceIndex].tokenId);
-                if (rightBraceIndexAtTokens === -1)
-                  throw new UnhandledError(removed[rightBraceIndex]);
-                convertBlock(tokens.slice(iAtTokens, rightBraceIndexAtTokens), 'fn', indentLevel + 2);
+                  convertRightSide(removed.slice(i + 1, setIndex), firstConvertedLength - 1, propType, true, indentLevel + 2);
+
+                  if (withoutSet) {
+                    converted.push(' '.repeat((indentLevel + 2) * indentCount));
+                    converted.push('}\r\n');
+
+                    return { hasModifiers: hasModifiers };
+                  }
+
+                  i = setIndex;
+                } else {
+                  throw new SyntaxError(removed[i]);
+                }
+
+                if (removed[i].text === ',' || removed[i].text === ';')
+                  i++;
 
                 converted.push(' '.repeat((indentLevel + 1) * indentCount));
-                converted.push('}\r\n');
+                preConverted = [];
+                if (removed[i].text === 'immut') {
+                  preConverted.push('readonly ');
+                  i++;
+                } else if (removed[i].text !== 'set' && removed[i].text !== '}')
+                  throw new SyntaxError(removed[i]);
+                if (removed[i].text === 'set') {
+                  preConverted.push('set ');
+                  i++;
+                } else if (removed[i].text === '}') {
+                  preConverted.push(' '.repeat((indentLevel + 1) * indentCount));
+                  preConverted.push('}');
+                  return { hasModifiers: hasModifiers };
+                } else
+                  throw new SyntaxError(removed[i]);
 
-                i = rightBraceIndex + 1;
-              } else if (removed[i].text === '=>') {
-                converted.push('=> ');
-                let parenthesisCount = 0;
-                let braceCount = 1;
-                let setEndIndex = -1;
-                for (let j = i + 1; j < removed.length; j++) {
-                  if (removed[j].text === '{') {
-                    braceCount++;
-                  } else if (removed[j].text === '}') {
-                    braceCount--;
-                    if (braceCount === -1 && parenthesisCount === 0) {
-                      setEndIndex = j;
+                if (removed[i].text === '@') {
+                  const modifiersEndIndex = removed.findIndex((s, j) => (s.text === '=>' || s.text === '{') && j > i) - 1;
+                  if (modifiersEndIndex === -2)
+                    throw new SyntaxError(removed[i]);
+                  const modifiers = searchModifiers(removed.slice(i + 1, modifiersEndIndex + 1));
+                  converted.push(...modifiers.map(x => x.text + ' '));
+                  i = modifiersEndIndex + 1;
+                }
+                converted.push(...preConverted);
+
+                if ((removed[i].text === '=>' && removed[i + 1].text === '{') || removed[i].text === '{') {
+                  converted.push('{\r\n');
+                  i = removed[i].text === '=>' ? i + 2 : i + 1;
+                  let parenthesisCount = 0;
+                  let braceCount = 1;
+                  let rightBraceIndex = -1;
+                  for (let j = i; j < removed.length; j++) {
+                    if (removed[j].text === '{') {
+                      braceCount++;
+                    } else if (removed[j].text === '}') {
+                      braceCount--;
+                      if (braceCount === 0 && parenthesisCount === 0) {
+                        rightBraceIndex = j;
+                        break;
+                      }
+                    } else if (removed[j].text === '(') {
+                      parenthesisCount++;
+                    } else if (removed[j].text === ')') {
+                      parenthesisCount--;
                     }
-                  } else if (removed[j].text === '(') {
-                    parenthesisCount++;
-                  } else if (removed[j].text === ')') {
-                    parenthesisCount--;
                   }
-                }
-                if (setEndIndex === -1) {
-                  setEndIndex = end - start - 1;
-                }
+                  if (rightBraceIndex === -1)
+                    throw new SyntaxError(removed[i], 'Missing right brace');
 
-                while (i < setEndIndex) {
-                  const next = isNext(() => true, true, i, removed, false, true) as { result: boolean, index: number };
-                  if (next.index === -1)
-                    throw new SyntaxError(removed[i]);
-                  const nextAtTokens = tokens.findIndex(s => s.tokenId === removed[next.index].tokenId);
-                  const endAt = convertRightSide(tokens.slice(nextAtTokens), firstConvertedLength - 1, propType, true, indentLevel + 2);
-                  const endAtAtRemoved = findLastIndex(removed, s => s.tokenId <= tokens[endAt.endAt + nextAtTokens].tokenId);
-                  i = endAtAtRemoved;
+                  const iAtTokens = tokens.findIndex(s => s.tokenId === removed[i].tokenId);
+                  if (iAtTokens === -1)
+                    throw new UnhandledError(removed[i]);
+                  const rightBraceIndexAtTokens = tokens.findIndex(s => s.tokenId === removed[rightBraceIndex].tokenId);
+                  if (rightBraceIndexAtTokens === -1)
+                    throw new UnhandledError(removed[rightBraceIndex]);
+                  convertBlock(tokens.slice(iAtTokens, rightBraceIndexAtTokens), 'fn', indentLevel + 2);
 
-                  const nextAssignment = isNext(() => true, true, i, removed, false, true) as { result: boolean, index: number };
-                  if (nextAssignment.index === -1)
-                    throw new SyntaxError(removed[i]);
-                  if (assignmentOperators.has(removed[nextAssignment.index].text)) {
-                    i = nextAssignment.index;
-                    if (converted[converted.length - 1] === ';\r\n')
-                      converted.pop();
-                    if (converted[converted.length - 1] === ' ')
-                      converted.pop();
-                    converted.push(' ', removed[nextAssignment.index].text, ' ');
-                  } else {
-                    break;
+                  converted.push(' '.repeat((indentLevel + 1) * indentCount));
+                  converted.push('}\r\n');
+
+                  i = rightBraceIndex + 1;
+                } else if (removed[i].text === '=>') {
+                  converted.push('=> ');
+                  let parenthesisCount = 0;
+                  let braceCount = 1;
+                  let setEndIndex = -1;
+                  for (let j = i + 1; j < removed.length; j++) {
+                    if (removed[j].text === '{') {
+                      braceCount++;
+                    } else if (removed[j].text === '}') {
+                      braceCount--;
+                      if (braceCount === -1 && parenthesisCount === 0) {
+                        setEndIndex = j;
+                      }
+                    } else if (removed[j].text === '(') {
+                      parenthesisCount++;
+                    } else if (removed[j].text === ')') {
+                      parenthesisCount--;
+                    }
                   }
+                  if (setEndIndex === -1) {
+                    setEndIndex = end - start - 1;
+                  }
+
+                  while (i < setEndIndex) {
+                    const next = isNext(() => true, true, i, removed, false, true) as { result: boolean, index: number };
+                    if (next.index === -1)
+                      throw new SyntaxError(removed[i]);
+                    const nextAtTokens = tokens.findIndex(s => s.tokenId === removed[next.index].tokenId);
+                    const endAt = convertRightSide(tokens.slice(nextAtTokens), firstConvertedLength - 1, propType, true, indentLevel + 2);
+                    const endAtAtRemoved = findLastIndex(removed, s => s.tokenId <= tokens[endAt.endAt + nextAtTokens].tokenId);
+                    i = endAtAtRemoved;
+
+                    const nextAssignment = isNext(() => true, true, i, removed, false, true) as { result: boolean, index: number };
+                    if (nextAssignment.index === -1)
+                      throw new SyntaxError(removed[i]);
+                    if (assignmentOperators.has(removed[nextAssignment.index].text)) {
+                      i = nextAssignment.index;
+                      if (converted[converted.length - 1] === ';\r\n')
+                        converted.pop();
+                      if (converted[converted.length - 1] === ' ')
+                        converted.pop();
+                      converted.push(' ', removed[nextAssignment.index].text, ' ');
+                    } else {
+                      break;
+                    }
+                  }
+
+                  i = setEndIndex;
+                } else {
+                  throw new SyntaxError(removed[i]);
                 }
 
-                i = setEndIndex;
-              } else {
-                throw new SyntaxError(removed[i]);
+                converted.push(' '.repeat(indentLevel * indentCount));
+                converted.push('}');
+                return { hasModifiers: hasModifiers };
               }
-
-              converted.push(' '.repeat(indentLevel * indentCount));
-              converted.push('}');
-              return { hasModifiers: hasModifiers };
             }
-          }
 
-          resetModifiers();
-          break;
-        }
-        case 'for':
-        case 'foreach':
-        case 'while':
-        case 'if':
-        case 'fixed':
-        case 'lock':
-        case 'do':
-        case 'try':
-        case 'checked':
-        case 'unchecked': {
-          if (container !== 'fn')
-            throw new SyntaxError(current, `${current.text} is not allowed here`);
-          if (isModifiersChanged())
-            throw new SyntaxError(current);
-
-          const endAt = convertBlockKeyword(tokens.slice(i), converted.length - 1, null, indentLevel, changeToYieldReturn);
-
-          i += endAt;
-          break;
-        }
-        case 'elif':
-        case 'else':
-        case 'catch':
-        case 'finally': {
-          if (container !== 'fn')
-            throw new SyntaxError(current, `${current.text.charAt(0).toUpperCase() + current.text.slice(1)} is not allowed here`);
-          else if (isModifiersChanged())
-            throw new SyntaxError(current);
-          else
-            throw new SyntaxError(current, `${current.text.charAt(0).toUpperCase() + current.text.slice(1)} is not allowed`);
-        }
-        case 'return': {
-          if (container !== 'fn')
-            throw new SyntaxError(current, 'Return is not allowed here');
-          if (isModifiersChanged())
-            throw new SyntaxError(current);
-
-          if (changeToYieldReturn)
-            converted.push('yield ');
-
-          const nextIndex = isNext(() => true, true, i, tokens, false, true) as { result: boolean, index: number };
-          if (nextIndex.index === -1)
-            throw new SyntaxError(tokens[i]);
-          const next = tokens[nextIndex.index];
-          if (next.text === ';') {
-            converted.push('return;\r\n');
-            i = nextIndex.index;
+            resetModifiers();
             break;
-          } else {
-            const endAt = convertRightSide(tokens.slice(i), converted.length - 1, null, false, indentLevel);
-            i = endAt.endAt + i;
           }
-          break;
-        }
-        case 'break': {
-          if (container !== 'fn')
-            throw new SyntaxError(current, 'Break is not allowed here');
-          if (isModifiersChanged())
-            throw new SyntaxError(current);
+          case 'for':
+          case 'foreach':
+          case 'while':
+          case 'if':
+          case 'fixed':
+          case 'lock':
+          case 'do':
+          case 'try':
+          case 'checked':
+          case 'unchecked': {
+            if (container !== 'fn')
+              throw new SyntaxError(current, `${current.text} is not allowed here`);
+            if (isModifiersChanged())
+              throw new SyntaxError(current);
 
-          if (changeToYieldReturn)
-            converted.push('yield ');
+            const endAt = convertBlockKeyword(tokens.slice(i), converted.length - 1, null, indentLevel, changeToYieldReturn);
 
-          const nextIndex = isNext(token => token.text === ';', true, i, tokens, false, true) as { result: boolean, index: number };
-          if (nextIndex.result) {
-            converted.push('break;\r\n');
-            i = nextIndex.index;
+            i += endAt;
             break;
-          } else {
-            throw new SyntaxError(tokens[nextIndex.index]);
           }
-        }
-        case 'switch': {
-          if (container !== 'fn')
-            throw new SyntaxError(current, 'Switch is not allowed here');
-          if (isModifiersChanged())
-            throw new SyntaxError(current);
-
-          let braceCount = 0;
-          let rightBraceIndex = -1;
-          for (let j = i + 1; j < tokens.length; j++) {
-            if (tokens[j].text === '{') {
-              braceCount++;
-            } else if (tokens[j].text === '}') {
-              braceCount--;
-              if (braceCount === 0) {
-                rightBraceIndex = j;
-                break;
-              }
-            }
+          case 'elif':
+          case 'else':
+          case 'catch':
+          case 'finally': {
+            if (container !== 'fn')
+              throw new SyntaxError(current, `${current.text.charAt(0).toUpperCase() + current.text.slice(1)} is not allowed here`);
+            else if (isModifiersChanged())
+              throw new SyntaxError(current);
+            else
+              throw new SyntaxError(current, `${current.text.charAt(0).toUpperCase() + current.text.slice(1)} is not allowed`);
           }
-          if (rightBraceIndex === -1)
-            throw new SyntaxError(current, 'Missing right brace');
+          case 'return': {
+            if (container !== 'fn')
+              throw new SyntaxError(current, 'Return is not allowed here');
+            if (isModifiersChanged())
+              throw new SyntaxError(current);
 
-          convertSwitch(tokens.slice(i, rightBraceIndex + 1), converted.length - 1, null, false, indentLevel);
-          i += rightBraceIndex;
-          break;
-        }
-        case 'enum': {
-          if (container !== 'none' && container !== 'namespace' && container !== 'class' && container !== 'struct')
-            throw new SyntaxError(current, 'Enum is not allowed here');
-          if (isModifiersChanged())
-            throw new SyntaxError(current);
+            if (changeToYieldReturn)
+              converted.push('yield ');
 
-          const leftBraceIndex = tokens.findIndex((s, j) => j > i && s.text === '{');
-          if (leftBraceIndex === -1)
-            throw new SyntaxError(current, 'Missing left brace');
-
-          const atIndex = tokens.findIndex((s, j) => j > i && leftBraceIndex > j && s.text === '@');
-
-          const colonIndex = tokens.findIndex((s, j) => j > i && (atIndex === -1 ? leftBraceIndex : atIndex) > j && s.text === ':');
-
-          const enumNameIndex = isNext(() => true, true, i, tokens, false, true) as { result: boolean, index: number };
-          if (enumNameIndex.result === false || enumNameIndex.index === i + 1 || (tokens[enumNameIndex.index].category !== 'context_keyword' && tokens[enumNameIndex.index].category !== undefined))
-            throw new SyntaxError(current, 'Missing enum name');
-          changeKind(tokens[enumNameIndex.index], 'name.enum', true);
-          if (tokens[enumNameIndex.index].text === '_' || tokens[enumNameIndex.index].text.startsWith(autoModifiedVarNamePrefix) || tokens[enumNameIndex.index].text.startsWith('__'))
-            throw new SyntaxError(tokens[enumNameIndex.index], 'Cannot use this enum name');
-
-          if (colonIndex !== -1) {
-            if (isNext(token => token.text === ':', true, enumNameIndex.index, tokens, false, false) === false)
-              throw new SyntaxError(tokens[colonIndex]);
-            let enumType = '';
-            let j = colonIndex;
-            while (true) {
-              j++;
-              if (j === leftBraceIndex) {
-                if (enumType === '')
-                  throw new SyntaxError(tokens[colonIndex], 'Missing enum type');
-                break;
-              }
-              if (tokens[j].category === 'space' || tokens[j].category === 'line_break' || tokens[j].category === 'comment') {
-                continue;
-              } else if (tokens[j].text === '.' || tokens[j].text === '::') {
-                enumType += tokens[j].text;
-              } else if (tokens[j].category !== 'keyword' && tokens[j].category !== undefined && tokens[j].category !== 'context_keyword') {
-                throw new SyntaxError(tokens[j]);
-              } else {
-                enumType += tokens[j].text;
-              }
-            }
-
-            converted.push(`enum ${tokens[enumNameIndex.index].text} : ${enumType} {\r\n`);
-          } else {
-            converted.push(`enum ${tokens[enumNameIndex.index].text} {\r\n`);
-          }
-
-          let braceCount = 1;
-          let rightBraceIndex = -1;
-          for (let j = leftBraceIndex + 1; j < tokens.length; j++) {
-            if (tokens[j].text === '{') {
-              braceCount++;
-            } else if (tokens[j].text === '}') {
-              braceCount--;
-              if (braceCount === 0) {
-                rightBraceIndex = j;
-                break;
-              }
-            }
-          }
-          if (rightBraceIndex === -1)
-            throw new SyntaxError(tokens[leftBraceIndex], 'Missing right brace');
-
-          for (let j = leftBraceIndex + 1; j < rightBraceIndex; j++) {
-            if (tokens[j].category === 'space' || tokens[j].category === 'line_break' || tokens[j].category === 'comment') {
-              continue;
-            } else if (tokens[j].text === ',') {
-              converted.push(',\r\n');
-            } else if (tokens[j].text === '=') {
-              converted.push(' = ');
-              const endAt = convertRightSide(tokens.slice(j + 1, rightBraceIndex), -1, null, false, indentLevel + 1);
-              j += endAt.endAt + 1;
-
-              if (converted[converted.length - 1] === ';\r\n')
-                converted.pop();
-              if (converted[converted.length - 1] === ' ')
-                converted.pop();
-
-              let next = isNext(token => token.text === ',', true, j, tokens, false, true) as { result: boolean, index: number };
-              if (next.result)
-                j = next.index;
-              else
-                converted.push(',\r\n');
-            } else if (tokens[j].category === 'operator') {
-              throw new SyntaxError(tokens[j]);
-            } else {
-              converted.push(' '.repeat((indentLevel + 1) * indentCount));
-              converted.push(tokens[j].text);
-            }
-          }
-
-          converted.push(' '.repeat(indentLevel * indentCount));
-          converted.push('}\r\n');
-          i = rightBraceIndex;
-          break;
-        }
-        case 'ctor': {
-          throw new SyntaxError(current, 'Not implemented');
-        }
-        case 'delegate': {
-          throw new SyntaxError(current, 'Not implemented');
-        }
-        case 'event': {
-          throw new SyntaxError(current, 'Not implemented');
-        }
-        case 'operator': {
-          // ユーザー定義の演算子、キャスト
-          // 下のような書き方もある（checked）
-          // public static int operator checked +(int a, int b) => a + b;
-          throw new SyntaxError(current, 'Not implemented');
-        }
-        case 'namespace': {
-          if (container !== 'none' && container !== 'namespace')
-            throw new SyntaxError(current, 'Namespace is not allowed here');
-          if (isModifiersChanged())
-            throw new SyntaxError(current);
-
-          let name = '';
-          let isBlock: null | boolean = null;
-          let j = i + 1;
-          for (j; j < tokens.length; j++) {
-            if (tokens[j].category === 'space' || tokens[j].category === 'line_break' || tokens[j].category === 'comment') {
-              continue;
-            } else if (tokens[j].text === '.') {
-              name += '.';
-            } else if (tokens[j].text === ';') {
-              isBlock = false;
+            const nextIndex = isNext(() => true, true, i, tokens, false, true) as { result: boolean, index: number };
+            if (nextIndex.index === -1)
+              throw new SyntaxError(tokens[i]);
+            const next = tokens[nextIndex.index];
+            if (next.text === ';') {
+              converted.push('return;\r\n');
+              i = nextIndex.index;
               break;
-            } else if (tokens[j].text === '{') {
-              isBlock = true;
-              break;
-            } else if (tokens[j].category !== undefined && tokens[j].category !== 'context_keyword') {
-              throw new SyntaxError(tokens[j]);
             } else {
-              changeKind(tokens[j], 'name.namespace', true);
-              name += tokens[j].text;
+              const endAt = convertRightSide(tokens.slice(i), converted.length - 1, null, false, indentLevel);
+              i = endAt.endAt + i;
+            }
+            break;
+          }
+          case 'break': {
+            if (container !== 'fn')
+              throw new SyntaxError(current, 'Break is not allowed here');
+            if (isModifiersChanged())
+              throw new SyntaxError(current);
+
+            if (changeToYieldReturn)
+              converted.push('yield ');
+
+            const nextIndex = isNext(token => token.text === ';', true, i, tokens, false, true) as { result: boolean, index: number };
+            if (nextIndex.result) {
+              converted.push('break;\r\n');
+              i = nextIndex.index;
+              break;
+            } else {
+              throw new SyntaxError(tokens[nextIndex.index]);
             }
           }
-          if (isBlock === null) {
-            throw new SyntaxError(current, 'Missing namespace name');
-          }
-          converted.push(`namespace ${name}`);
-          if (isBlock) {
-            converted.push(' {\r\n');
-            let braceCount = 1;
+          case 'switch': {
+            if (container !== 'fn')
+              throw new SyntaxError(current, 'Switch is not allowed here');
+            if (isModifiersChanged())
+              throw new SyntaxError(current);
+
+            let braceCount = 0;
             let rightBraceIndex = -1;
-            for (let k = j + 1; k < tokens.length; k++) {
-              if (tokens[k].text === '{') {
+            for (let j = i + 1; j < tokens.length; j++) {
+              if (tokens[j].text === '{') {
                 braceCount++;
-              } else if (tokens[k].text === '}') {
+              } else if (tokens[j].text === '}') {
                 braceCount--;
                 if (braceCount === 0) {
-                  rightBraceIndex = k;
+                  rightBraceIndex = j;
                   break;
                 }
               }
             }
             if (rightBraceIndex === -1)
-              throw new SyntaxError(tokens[j], 'Missing right brace');
-            convertBlock(tokens.slice(j + 1, rightBraceIndex), 'namespace', indentLevel + 1);
+              throw new SyntaxError(current, 'Missing right brace');
+
+            convertSwitch(tokens.slice(i, rightBraceIndex + 1), converted.length - 1, null, false, indentLevel);
+            i += rightBraceIndex;
+            break;
+          }
+          case 'enum': {
+            if (container !== 'none' && container !== 'namespace' && container !== 'class' && container !== 'struct')
+              throw new SyntaxError(current, 'Enum is not allowed here');
+            if (isModifiersChanged())
+              throw new SyntaxError(current);
+
+            const leftBraceIndex = tokens.findIndex((s, j) => j > i && s.text === '{');
+            if (leftBraceIndex === -1)
+              throw new SyntaxError(current, 'Missing left brace');
+
+            const atIndex = tokens.findIndex((s, j) => j > i && leftBraceIndex > j && s.text === '@');
+
+            const colonIndex = tokens.findIndex((s, j) => j > i && (atIndex === -1 ? leftBraceIndex : atIndex) > j && s.text === ':');
+
+            const enumNameIndex = isNext(() => true, true, i, tokens, false, true) as { result: boolean, index: number };
+            if (enumNameIndex.result === false || enumNameIndex.index === i + 1 || (tokens[enumNameIndex.index].category !== 'context_keyword' && tokens[enumNameIndex.index].category !== undefined))
+              throw new SyntaxError(current, 'Missing enum name');
+            changeKind(tokens[enumNameIndex.index], 'name.enum', true);
+            if (tokens[enumNameIndex.index].text === '_' || tokens[enumNameIndex.index].text.startsWith(autoModifiedVarNamePrefix) || tokens[enumNameIndex.index].text.startsWith('__'))
+              throw new SyntaxError(tokens[enumNameIndex.index], 'Cannot use this enum name');
+
+            if (colonIndex !== -1) {
+              if (isNext(token => token.text === ':', true, enumNameIndex.index, tokens, false, false) === false)
+                throw new SyntaxError(tokens[colonIndex]);
+              let enumType = '';
+              let j = colonIndex;
+              while (true) {
+                j++;
+                if (j === leftBraceIndex) {
+                  if (enumType === '')
+                    throw new SyntaxError(tokens[colonIndex], 'Missing enum type');
+                  break;
+                }
+                if (tokens[j].category === 'space' || tokens[j].category === 'line_break' || tokens[j].category === 'comment') {
+                  continue;
+                } else if (tokens[j].text === '.' || tokens[j].text === '::') {
+                  enumType += tokens[j].text;
+                } else if (tokens[j].category !== 'keyword' && tokens[j].category !== undefined && tokens[j].category !== 'context_keyword') {
+                  throw new SyntaxError(tokens[j]);
+                } else {
+                  enumType += tokens[j].text;
+                }
+              }
+
+              converted.push(`enum ${tokens[enumNameIndex.index].text} : ${enumType} {\r\n`);
+            } else {
+              converted.push(`enum ${tokens[enumNameIndex.index].text} {\r\n`);
+            }
+
+            let braceCount = 1;
+            let rightBraceIndex = -1;
+            for (let j = leftBraceIndex + 1; j < tokens.length; j++) {
+              if (tokens[j].text === '{') {
+                braceCount++;
+              } else if (tokens[j].text === '}') {
+                braceCount--;
+                if (braceCount === 0) {
+                  rightBraceIndex = j;
+                  break;
+                }
+              }
+            }
+            if (rightBraceIndex === -1)
+              throw new SyntaxError(tokens[leftBraceIndex], 'Missing right brace');
+
+            for (let j = leftBraceIndex + 1; j < rightBraceIndex; j++) {
+              if (tokens[j].category === 'space' || tokens[j].category === 'line_break' || tokens[j].category === 'comment') {
+                continue;
+              } else if (tokens[j].text === ',') {
+                converted.push(',\r\n');
+              } else if (tokens[j].text === '=') {
+                converted.push(' = ');
+                const endAt = convertRightSide(tokens.slice(j + 1, rightBraceIndex), -1, null, false, indentLevel + 1);
+                j += endAt.endAt + 1;
+
+                if (converted[converted.length - 1] === ';\r\n')
+                  converted.pop();
+                if (converted[converted.length - 1] === ' ')
+                  converted.pop();
+
+                let next = isNext(token => token.text === ',', true, j, tokens, false, true) as { result: boolean, index: number };
+                if (next.result)
+                  j = next.index;
+                else
+                  converted.push(',\r\n');
+              } else if (tokens[j].category === 'operator') {
+                throw new SyntaxError(tokens[j]);
+              } else {
+                converted.push(' '.repeat((indentLevel + 1) * indentCount));
+                converted.push(tokens[j].text);
+              }
+            }
+
             converted.push(' '.repeat(indentLevel * indentCount));
             converted.push('}\r\n');
             i = rightBraceIndex;
-          } else {
-            converted.push(';\r\n');
-            convertBlock(tokens.slice(j + 1), 'namespace', indentLevel);
-            i = tokens.length;
+            break;
           }
-          break;
-        }
-        case 'using': {
-          if (container !== 'none' && container !== 'namespace')
-            throw new SyntaxError(current, 'Using is not allowed');
-          if (isModifiersChanged())
-            throw new SyntaxError(current);
+          case 'ctor': {
+            throw new SyntaxError(current, 'Not implemented');
+          }
+          case 'delegate': {
+            throw new SyntaxError(current, 'Not implemented');
+          }
+          case 'event': {
+            throw new SyntaxError(current, 'Not implemented');
+          }
+          case 'operator': {
+            // ユーザー定義の演算子、キャスト
+            // 下のような書き方もある（checked）
+            // public static int operator checked +(int a, int b) => a + b;
+            throw new SyntaxError(current, 'Not implemented');
+          }
+          case 'namespace': {
+            if (container !== 'none' && container !== 'namespace')
+              throw new SyntaxError(current, 'Namespace is not allowed here');
+            if (isModifiersChanged())
+              throw new SyntaxError(current);
 
-          if (isModifiersChanged())
-            throw new SyntaxError(current);
-
-          const semicolonIndex = tokens.findIndex((s, j) => j > i && s.text === ';');
-          if (semicolonIndex == -1) {
-            throw new SyntaxError(current, 'Missing semicolon');
-          }
-          const removed = removeEmptyWords(tokens.slice(i + 1, semicolonIndex));
-          const unexpectedIndex = removed.findIndex(s => (s.category !== 'context_keyword' && s.category !== undefined) && (s.text !== '.' && s.text !== ',' && s.text !== '@' && s.text !== 'static'));
-          if (unexpectedIndex !== -1) {
-            throw new SyntaxError(tokens[unexpectedIndex]);
-          }
-
-          interface Using {
-            name: string | null;
-            isStatic: boolean;
-            isGlobal: boolean;
-          }
-          const usings: Using[] = [];
-          const currentUsing: Using = { name: null, isStatic: false, isGlobal: false };
-          let j = 0;
-          while (j < removed.length) {
-            if (removed[j].text === '@') {
-              if (currentUsing.name === null || removed.length <= j + 1) {
-                throw new SyntaxError(removed[j]);
-              }
-              let commaIndex = removed.findIndex((s, k) => k > j && s.text === ',');
-              if (commaIndex !== -1)
-                throw new SyntaxError(removed[commaIndex], 'After @, "static" and "global" are only allowed');
-              for (let k = j + 1; k < removed.length; k++) {
-                if (removed[k].text === 'static') {
-                  if (currentUsing.isStatic) {
-                    throw new SyntaxError(removed[k], 'Duplicate static');
-                  }
-                  currentUsing.isStatic = true;
-                } else if (removed[k].text === 'global') {
-                  if (currentUsing.isGlobal) {
-                    throw new SyntaxError(removed[k], 'Duplicate global');
-                  }
-                  currentUsing.isGlobal = true;
-                } else {
-                  throw new SyntaxError(removed[k]);
-                }
-              }
-              j += 2;
-            }
-            else {
-              if (currentUsing.name === null) {
-                if (removed[j].category !== 'context_keyword' && removed[j].category !== undefined)
-                  throw new SyntaxError(removed[j]);
-                changeKind(removed[j], 'name.other');
-                currentUsing.name = removed[j].text;
+            let name = '';
+            let isBlock: null | boolean = null;
+            let j = i + 1;
+            for (j; j < tokens.length; j++) {
+              if (tokens[j].category === 'space' || tokens[j].category === 'line_break' || tokens[j].category === 'comment') {
+                continue;
+              } else if (tokens[j].text === '.') {
+                name += '.';
+              } else if (tokens[j].text === ';') {
+                isBlock = false;
+                break;
+              } else if (tokens[j].text === '{') {
+                isBlock = true;
+                break;
+              } else if (tokens[j].category !== undefined && tokens[j].category !== 'context_keyword') {
+                throw new SyntaxError(tokens[j]);
               } else {
-                if (removed[j].text === ',') {
-                  usings.push({ name: currentUsing.name, isStatic: currentUsing.isStatic, isGlobal: currentUsing.isGlobal });
-                  currentUsing.name = null;
-                  currentUsing.isStatic = false;
-                  currentUsing.isGlobal = false;
-                  j++;
-                  continue;
+                changeKind(tokens[j], 'name.namespace', true);
+                name += tokens[j].text;
+              }
+            }
+            if (isBlock === null) {
+              throw new SyntaxError(current, 'Missing namespace name');
+            }
+            converted.push(`namespace ${name}`);
+            if (isBlock) {
+              converted.push(' {\r\n');
+              let braceCount = 1;
+              let rightBraceIndex = -1;
+              for (let k = j + 1; k < tokens.length; k++) {
+                if (tokens[k].text === '{') {
+                  braceCount++;
+                } else if (tokens[k].text === '}') {
+                  braceCount--;
+                  if (braceCount === 0) {
+                    rightBraceIndex = k;
+                    break;
+                  }
                 }
-                if ((removed[j].category === 'operator' && isAccessor(removed[j].text)) === false && removed[j].category !== 'context_keyword' && removed[j].category !== undefined) {
+              }
+              if (rightBraceIndex === -1)
+                throw new SyntaxError(tokens[j], 'Missing right brace');
+              convertBlock(tokens.slice(j + 1, rightBraceIndex), 'namespace', indentLevel + 1);
+              converted.push(' '.repeat(indentLevel * indentCount));
+              converted.push('}\r\n');
+              i = rightBraceIndex;
+            } else {
+              converted.push(';\r\n');
+              convertBlock(tokens.slice(j + 1), 'namespace', indentLevel);
+              i = tokens.length;
+            }
+            break;
+          }
+          case 'using': {
+            if (container !== 'none' && container !== 'namespace')
+              throw new SyntaxError(current, 'Using is not allowed');
+            if (isModifiersChanged())
+              throw new SyntaxError(current);
+
+            if (isModifiersChanged())
+              throw new SyntaxError(current);
+
+            const semicolonIndex = tokens.findIndex((s, j) => j > i && s.text === ';');
+            if (semicolonIndex == -1) {
+              throw new SyntaxError(current, 'Missing semicolon');
+            }
+            const removed = removeEmptyWords(tokens.slice(i + 1, semicolonIndex));
+            const unexpectedIndex = removed.findIndex(s => (s.category !== 'context_keyword' && s.category !== undefined) && (s.text !== '.' && s.text !== ',' && s.text !== '@' && s.text !== 'static'));
+            if (unexpectedIndex !== -1) {
+              throw new SyntaxError(tokens[unexpectedIndex]);
+            }
+
+            interface Using {
+              name: string | null;
+              isStatic: boolean;
+              isGlobal: boolean;
+            }
+            const usings: Using[] = [];
+            const currentUsing: Using = { name: null, isStatic: false, isGlobal: false };
+            let j = 0;
+            while (j < removed.length) {
+              if (removed[j].text === '@') {
+                if (currentUsing.name === null || removed.length <= j + 1) {
                   throw new SyntaxError(removed[j]);
                 }
-                changeKind(removed[j], 'name.other');
-                currentUsing.name += removed[j].text;
+                let commaIndex = removed.findIndex((s, k) => k > j && s.text === ',');
+                if (commaIndex !== -1)
+                  throw new SyntaxError(removed[commaIndex], 'After @, "static" and "global" are only allowed');
+                for (let k = j + 1; k < removed.length; k++) {
+                  if (removed[k].text === 'static') {
+                    if (currentUsing.isStatic) {
+                      throw new SyntaxError(removed[k], 'Duplicate static');
+                    }
+                    currentUsing.isStatic = true;
+                  } else if (removed[k].text === 'global') {
+                    if (currentUsing.isGlobal) {
+                      throw new SyntaxError(removed[k], 'Duplicate global');
+                    }
+                    currentUsing.isGlobal = true;
+                  } else {
+                    throw new SyntaxError(removed[k]);
+                  }
+                }
+                j += 2;
               }
-              j++;
+              else {
+                if (currentUsing.name === null) {
+                  if (removed[j].category !== 'context_keyword' && removed[j].category !== undefined)
+                    throw new SyntaxError(removed[j]);
+                  changeKind(removed[j], 'name.other');
+                  currentUsing.name = removed[j].text;
+                } else {
+                  if (removed[j].text === ',') {
+                    usings.push({ name: currentUsing.name, isStatic: currentUsing.isStatic, isGlobal: currentUsing.isGlobal });
+                    currentUsing.name = null;
+                    currentUsing.isStatic = false;
+                    currentUsing.isGlobal = false;
+                    j++;
+                    continue;
+                  }
+                  if ((removed[j].category === 'operator' && isAccessor(removed[j].text)) === false && removed[j].category !== 'context_keyword' && removed[j].category !== undefined) {
+                    throw new SyntaxError(removed[j]);
+                  }
+                  changeKind(removed[j], 'name.other');
+                  currentUsing.name += removed[j].text;
+                }
+                j++;
+              }
             }
+
+            if (currentUsing.name !== null)
+              usings.push(currentUsing);
+
+            if (usings.length === 0)
+              throw new SyntaxError(current, 'Missing using name');
+            const containsStatic = usings.findIndex(s => s.isStatic) !== -1;
+            const containsGlobal = usings.findIndex(s => s.isGlobal) !== -1;
+            for (let using of usings) {
+              converted.push(`${containsGlobal ? 'global ' : ''}using ${containsStatic ? 'static ' : ''}${using.name};\r\n`);
+            }
+
+            i = semicolonIndex;
+            break;
           }
+          case 'abstract':
+          case 'new':
+          case 'override':
+          case 'virtual': {
+            if (isNextBlankOrComment() === false)
+              throw new SyntaxError(tokens[i + 1]);
 
-          if (currentUsing.name !== null)
-            usings.push(currentUsing);
+            converted.pop();
 
-          if (usings.length === 0)
-            throw new SyntaxError(current, 'Missing using name');
-          const containsStatic = usings.findIndex(s => s.isStatic) !== -1;
-          const containsGlobal = usings.findIndex(s => s.isGlobal) !== -1;
-          for (let using of usings) {
-            converted.push(`${containsGlobal ? 'global ' : ''}using ${containsStatic ? 'static ' : ''}${using.name};\r\n`);
+            if (modifiers.inheritance !== null) {
+              if (modifiers.inheritance[0] === current.text)
+                throw new SyntaxError(current, `Duplicate ${current.text}`);
+              else
+                throw new SyntaxError(current, `${current.text} cannot be used with ${modifiers.inheritance[0]}`);
+            }
+            modifiers.inheritance = [current.text, current];
+            modifiers.latestModifier = current.text;
+            break;
           }
+          case 'ref': {
+            converted.pop();
 
-          i = semicolonIndex;
-          break;
-        }
-        case 'abstract':
-        case 'new':
-        case 'override':
-        case 'virtual': {
-          if (isNextBlankOrComment() === false)
-            throw new SyntaxError(tokens[i + 1]);
+            const nextIndex = isNext(() => true, true, i, tokens, false, true) as { result: boolean, index: number };
 
-          converted.pop();
+            if (nextIndex.index === -1 || modifiers.refImmut !== null)
+              throw new SyntaxError(current);
 
-          if (modifiers.inheritance !== null) {
-            if (modifiers.inheritance[0] === current.text)
-              throw new SyntaxError(current, `Duplicate ${current.text}`);
-            else
-              throw new SyntaxError(current, `${current.text} cannot be used with ${modifiers.inheritance[0]}`);
-          }
-          modifiers.inheritance = [current.text, current];
-          modifiers.latestModifier = current.text;
-          break;
-        }
-        case 'ref': {
-          converted.pop();
+            const next = tokens[nextIndex.index];
 
-          const nextIndex = isNext(() => true, true, i, tokens, false, true) as { result: boolean, index: number };
-
-          if (nextIndex.index === -1 || modifiers.refImmut !== null)
-            throw new SyntaxError(current);
-
-          const next = tokens[nextIndex.index];
-
-          if (next.text === 'immut') {
-            modifiers.refImmut = ['ref immut', { content: 'ref immut', start: current.start, end: next.end }];
-            next.text = '--ref-immut';
-            modifiers.latestModifier = 'ref';
-            i = nextIndex.index - 1;
-          } else {
-            if (next.category !== undefined && next.category !== 'context_keyword' && next.text !== 'let')
-              throw new SyntaxError(next);
-
-            modifiers.refImmut = ['ref', current];
-            current.text = '--ref';
-            modifiers.latestModifier = 'ref';
-            i--;
-          }
-
-          break;
-        }
-        case 'immut': {
-          converted.pop();
-
-          const nextIndex = isNext(() => true, true, i, tokens, false, true) as { result: boolean, index: number };
-
-          if (nextIndex.index === -1 || modifiers.refImmut !== null)
-            throw new SyntaxError(current);
-
-          const next = tokens[nextIndex.index];
-
-          if (next.text === 'ref') {
-            const nextNextIndex = isNext(() => true, true, nextIndex.index, tokens, false, true) as { result: boolean, index: number };
-
-            if (nextNextIndex.index === -1)
-              throw new SyntaxError(next);
-
-            const nextNext = tokens[nextNextIndex.index];
-
-            if (nextNext.text === 'immut') {
-              modifiers.refImmut = ['immut ref immut', { content: 'immut ref immut', start: current.start, end: nextNext.end }];
-              nextNext.text = '--immut-ref-immut';
-              modifiers.latestModifier = 'immut';
-              i = nextNextIndex.index - 1;
-            } else {
-              if (nextNext.category !== undefined && nextNext.category !== 'context_keyword' && nextNext.text !== 'let')
-                throw new SyntaxError(nextNext);
-
-              modifiers.refImmut = ['immut ref', { content: 'immut ref', start: current.start, end: next.end }];
-              next.text = '--immut-ref';
+            if (next.text === 'immut') {
+              modifiers.refImmut = ['ref immut', { content: 'ref immut', start: current.start, end: next.end }];
+              next.text = '--ref-immut';
               modifiers.latestModifier = 'ref';
               i = nextIndex.index - 1;
+            } else {
+              if (next.category !== undefined && next.category !== 'context_keyword' && next.text !== 'let')
+                throw new SyntaxError(next);
+
+              modifiers.refImmut = ['ref', current];
+              current.text = '--ref';
+              modifiers.latestModifier = 'ref';
+              i--;
             }
-          } else {
-            if (next.category !== undefined && next.category !== 'context_keyword' && next.text !== 'let' && next.text !== 'struct')
-              throw new SyntaxError(next);
 
-            modifiers.refImmut = ['immut', current];
-            current.text = '--immut';
-            modifiers.latestModifier = 'immut';
-            i--;
+            break;
           }
+          case 'immut': {
+            converted.pop();
 
-          break;
-        }
-        case 'async': {
-          if (isNextBlankOrComment() === false)
-            throw new SyntaxError(tokens[i + 1]);
+            const nextIndex = isNext(() => true, true, i, tokens, false, true) as { result: boolean, index: number };
 
-          converted.pop();
+            if (nextIndex.index === -1 || modifiers.refImmut !== null)
+              throw new SyntaxError(current);
 
-          if (modifiers.async)
-            throw new SyntaxError(current, 'Duplicate async');
-          modifiers.async = [true, current];
-          modifiers.latestModifier = current.text;
-          break;
-        }
-        case 'yield': {
-          if (isNextBlankOrComment() === false)
-            throw new SyntaxError(tokens[i + 1]);
+            const next = tokens[nextIndex.index];
 
-          converted.pop();
+            if (next.text === 'ref') {
+              const nextNextIndex = isNext(() => true, true, nextIndex.index, tokens, false, true) as { result: boolean, index: number };
 
-          if (modifiers.yield)
-            throw new SyntaxError(current, 'Duplicate yield');
-          modifiers.yield = [true, current];
-          modifiers.latestModifier = current.text;
-          break;
-        }
-        case 'partial': {
-          if (isNextBlankOrComment() === false)
-            throw new SyntaxError(tokens[i + 1]);
+              if (nextNextIndex.index === -1)
+                throw new SyntaxError(next);
 
-          converted.pop();
+              const nextNext = tokens[nextNextIndex.index];
 
-          if (modifiers.partial)
-            throw new SyntaxError(current, 'Duplicate partial');
-          modifiers.partial = [true, current];
-          modifiers.latestModifier = current.text;
-          break;
-        }
-        case 'goto': {
-          throw new SyntaxError(current, 'Goto is not allowed');
-        }
-        case 'and':
-        case 'as':
-        case 'is':
-        case 'or': {
-          throw new SyntaxError(current);
-        }
-        default: {
-          if (isModifiersChanged())
+              if (nextNext.text === 'immut') {
+                modifiers.refImmut = ['immut ref immut', { content: 'immut ref immut', start: current.start, end: nextNext.end }];
+                nextNext.text = '--immut-ref-immut';
+                modifiers.latestModifier = 'immut';
+                i = nextNextIndex.index - 1;
+              } else {
+                if (nextNext.category !== undefined && nextNext.category !== 'context_keyword' && nextNext.text !== 'let')
+                  throw new SyntaxError(nextNext);
+
+                modifiers.refImmut = ['immut ref', { content: 'immut ref', start: current.start, end: next.end }];
+                next.text = '--immut-ref';
+                modifiers.latestModifier = 'ref';
+                i = nextIndex.index - 1;
+              }
+            } else {
+              if (next.category !== undefined && next.category !== 'context_keyword' && next.text !== 'let' && next.text !== 'struct')
+                throw new SyntaxError(next);
+
+              modifiers.refImmut = ['immut', current];
+              current.text = '--immut';
+              modifiers.latestModifier = 'immut';
+              i--;
+            }
+
+            break;
+          }
+          case 'async': {
+            if (isNextBlankOrComment() === false)
+              throw new SyntaxError(tokens[i + 1]);
+
+            converted.pop();
+
+            if (modifiers.async)
+              throw new SyntaxError(current, 'Duplicate async');
+            modifiers.async = [true, current];
+            modifiers.latestModifier = current.text;
+            break;
+          }
+          case 'yield': {
+            if (isNextBlankOrComment() === false)
+              throw new SyntaxError(tokens[i + 1]);
+
+            converted.pop();
+
+            if (modifiers.yield)
+              throw new SyntaxError(current, 'Duplicate yield');
+            modifiers.yield = [true, current];
+            modifiers.latestModifier = current.text;
+            break;
+          }
+          case 'partial': {
+            if (isNextBlankOrComment() === false)
+              throw new SyntaxError(tokens[i + 1]);
+
+            converted.pop();
+
+            if (modifiers.partial)
+              throw new SyntaxError(current, 'Duplicate partial');
+            modifiers.partial = [true, current];
+            modifiers.latestModifier = current.text;
+            break;
+          }
+          case 'goto': {
+            throw new SyntaxError(current, 'Goto is not allowed');
+          }
+          case 'and':
+          case 'as':
+          case 'is':
+          case 'or': {
             throw new SyntaxError(current);
+          }
+          default: {
+            if (isModifiersChanged())
+              throw new SyntaxError(current);
 
-          const rightSide = convertRightSide(tokens.slice(i), converted.length, null, container !== 'fn', indentLevel);
-          i += rightSide.endAt;
-          break;
+            const rightSide = convertRightSide(tokens.slice(i), converted.length, null, container !== 'fn', indentLevel);
+            i += rightSide.endAt;
+            break;
+          }
+        }
+      } else if (current.category !== 'space' && current.category !== 'line_break' && current.category !== 'comment') {
+        if (previousI === i)
+          throw new SyntaxError(current);
+
+        converted.push(' '.repeat(indentLevel * indentCount));
+
+        const firstConvertedLength = converted.length;
+
+        i--;
+        while (true) {
+          const next = isNext(() => true, true, i, tokens, false, true) as { result: boolean, index: number };
+          if (next.index === -1)
+            throw new SyntaxError(tokens[i]);
+          const endAt = convertRightSide(tokens.slice(next.index), firstConvertedLength - 1, true, container !== 'fn', indentLevel);
+          i = endAt.endAt + next.index;
+
+          const nextAssignment = isNext(() => true, true, i, tokens, false, true) as { result: boolean, index: number };
+          if (nextAssignment.index === -1)
+            // throw new SyntaxError(tokens[i]);
+            break;
+          if (assignmentOperators.has(tokens[nextAssignment.index].text)) {
+            i = nextAssignment.index;
+            if (converted[converted.length - 1] === ';\r\n')
+              converted.pop();
+            if (converted[converted.length - 1] === ' ')
+              converted.pop();
+            converted.push(' ', tokens[nextAssignment.index].text, ' ');
+          } else {
+            break;
+          }
         }
       }
-    } else if (current.category !== 'space' && current.category !== 'line_break' && current.category !== 'comment') {
-      if (previousI === i)
-        throw new SyntaxError(current);
 
-      converted.push(' '.repeat(indentLevel * indentCount));
+      if (oneLine && converted[converted.length - 1].endsWith('\r\n'))
+        return i;
 
-      const firstConvertedLength = converted.length;
+      previousI = ++i;
 
-      i--;
-      while (true) {
-        const next = isNext(() => true, true, i, tokens, false, true) as { result: boolean, index: number };
-        if (next.index === -1)
-          throw new SyntaxError(tokens[i]);
-        const endAt = convertRightSide(tokens.slice(next.index), firstConvertedLength - 1, true, container !== 'fn', indentLevel);
-        i = endAt.endAt + next.index;
-
-        const nextAssignment = isNext(() => true, true, i, tokens, false, true) as { result: boolean, index: number };
-        if (nextAssignment.index === -1)
-          // throw new SyntaxError(tokens[i]);
-          break;
-        if (assignmentOperators.has(tokens[nextAssignment.index].text)) {
-          i = nextAssignment.index;
-          if (converted[converted.length - 1] === ';\r\n')
-            converted.pop();
-          if (converted[converted.length - 1] === ' ')
-            converted.pop();
-          converted.push(' ', tokens[nextAssignment.index].text, ' ');
+      for (let j = i; j < tokens.length; j++) {
+        if (tokens[j].text == ';') {
+          i = j + 1;
         } else {
           break;
         }
       }
     }
 
-    if (oneLine && converted[converted.length - 1].endsWith('\r\n'))
-      return i;
+    function isNextBlankOrComment(indexOverride: null | number = null, tokensOverride: null | BaseToken[] = null) {
+      const tokensToUse = tokensOverride || tokens;
+      const indexToUse = (indexOverride || i) + 1;
+      if (tokensToUse[indexToUse].category === 'space' || tokensToUse[indexToUse].category === 'line_break' || tokensToUse[indexToUse].category === 'comment')
+        return true;
+      return false;
+    }
 
-    previousI = ++i;
-
-    for (let j = i; j < tokens.length; j++) {
-      if (tokens[j].text == ';') {
-        i = j + 1;
-      } else {
-        break;
+    function indexOfNotBlankOrComment(startIndex: number, endIndex: number, tokensOverride: null | BaseToken[] = null) {
+      const tokensToUse = tokensOverride || tokens;
+      for (let j = startIndex; j < endIndex; j++) {
+        if (tokensToUse[j].category !== 'space' && tokensToUse[j].category !== 'line_break' && tokensToUse[j].category !== 'comment')
+          return j;
       }
+      return -1;
     }
-  }
 
-  function isNextBlankOrComment(indexOverride: null | number = null, tokensOverride: null | BaseToken[] = null) {
-    const tokensToUse = tokensOverride || tokens;
-    const indexToUse = (indexOverride || i) + 1;
-    if (tokensToUse[indexToUse].category === 'space' || tokensToUse[indexToUse].category === 'line_break' || tokensToUse[indexToUse].category === 'comment')
-      return true;
-    return false;
-  }
+    return i;
 
-  function indexOfNotBlankOrComment(startIndex: number, endIndex: number, tokensOverride: null | BaseToken[] = null) {
-    const tokensToUse = tokensOverride || tokens;
-    for (let j = startIndex; j < endIndex; j++) {
-      if (tokensToUse[j].category !== 'space' && tokensToUse[j].category !== 'line_break' && tokensToUse[j].category !== 'comment')
-        return j;
-    }
-    return -1;
   }
-
-  return i;
 }
 
 function searchModifiers(tokens: BaseToken[]) {

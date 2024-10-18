@@ -8,25 +8,24 @@
   <link rel="stylesheet" href="/style.css" />
 
   <script>
-    setLightMode();
-    return;
-
     const isDark = matchMedia('(prefers-color-scheme: dark)');
-    const savedTheme = localStorage.getItem('theme');
-    if (savedTheme === null)
-      setAutoMode();
-    else
-      switch (savedTheme) {
-        case 'auto':
-          setAutoMode();
-          break;
-        case 'light':
-          setLightMode();
-          break;
-        case 'dark':
-          setDarkMode();
-          break;
-      }
+    // const savedTheme = localStorage.getItem('theme');
+    // if (savedTheme === null)
+    //   setAutoMode();
+    // else
+    //   switch (savedTheme) {
+    //     case 'auto':
+    //       setAutoMode();
+    //       break;
+    //     case 'light':
+    //       setLightMode();
+    //       break;
+    //     case 'dark':
+    //       setDarkMode();
+    //       break;
+    //   }
+
+    setLightMode();
 
     function toggleTheme(mql) {
       if (mql.matches)
