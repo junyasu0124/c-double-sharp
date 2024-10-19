@@ -275,7 +275,7 @@ function convertBlock(tokens: BaseToken[], container: BlockType, indentLevel: nu
   while (true) {
     try {
       result = innerFn(i, previousI, errored);
-    } catch (e) {
+    } catch (e) {/*
       if (e instanceof SyntaxError || e instanceof UnhandledError) {
         if (lastSuccessful === null || testingFnTokens.length === 0)
           throw e;
@@ -285,7 +285,8 @@ function convertBlock(tokens: BaseToken[], container: BlockType, indentLevel: nu
       } else {
         throw e;
       }
-      continue;
+      continue;*/
+      throw e;
     }
     return result;
   }
@@ -1071,7 +1072,7 @@ function convertBlock(tokens: BaseToken[], container: BlockType, indentLevel: nu
               i: originalI,
               previousI: previousI,
             }
-            const rightSide = convertRightSide(tokens.slice(rightSideStartIndex.index), firstConvertedLength - 1, varType, container !== 'fn', indentLevel, errored ? testingFnTokens : []);
+            const rightSide = convertRightSide(tokens.slice(rightSideStartIndex.index), firstConvertedLength - 1, varType, container !== 'fn', indentLevel);
             testingFnTokens = rightSide.testingFnTokens;
 
             if (current.text === 'const') {
